@@ -15,16 +15,18 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
+from functools import cache
 from pathlib import Path
 
 import boto3
 
 from common import results
-from worker import trajectory
+from worker import submission_config, trajectory
 from worker.gateway import delete_key, mint_key, usage_for_key
 
-QUEUE_URL = os.environ["QUEUE_URL"]
+QUEUE_URL = os.environ.get("QUEUE_URL", "")
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://127.0.0.1:4000/v1")
 TASKS_DIR = Path(os.environ.get("TASKS_DIR", "tasks")).resolve()
 # Kept rather than thrown away with the temp dir: `harbor view` reads these,
@@ -39,8 +41,24 @@ RUNS_DIR = JOBS_DIR / "runs"
 # Where a team's uv project sits inside their fork of this repo.
 AGENT_SUBDIR = os.environ.get("AGENT_SUBDIR", "agent")
 
-sqs = boto3.client("sqs", region_name=results.region())
-table = results.table()
+# A message that failed goes back to the queue with a delay rather than
+# immediately: a rollout failing on something durable would otherwise spend all
+# five of its attempts in a few seconds and reach the DLQ before the cause had
+# time to clear. Doubling per attempt, capped well under the visibility timeout.
+RETRY_BACKOFF_SEC = 30
+MAX_BACKOFF_SEC = 900
+
+
+# Built on first use, not on import: the self-checks below exercise the parts
+# with logic in them, and none of that needs AWS to exist.
+@cache
+def queue():
+    return boto3.client("sqs", region_name=results.region())
+
+
+@cache
+def table():
+    return results.table()
 
 
 def task_dir(task_id: str) -> Path:
@@ -53,71 +71,129 @@ def task_dir(task_id: str) -> Path:
     return TASKS_DIR / task_id.split("#", 1)[0]
 
 
-def run_rollout(job: dict, slug: str) -> dict:
+def harbor_command(job: dict, slug: str, task_path: Path, config: Path | None, key: str) -> list[str]:
+    """The rollout, as a command.
+
+    `--config` when the submission brought a usable agent.yaml, `-a` when it did
+    not. The two are alternatives: the config names the agent, so passing both
+    would silently override the file the team was told decides what runs.
+
+    Everything the config is *not* allowed to decide is a flag here, and flags
+    win over the file: the task, the repeat count, the output directory and the
+    agent environment belong to the runner.
+    """
+    command = [
+        "harbor", "run",
+        "-p", str(task_path),
+        "-n", "1",
+        # The job name is the directory harbor creates under -o, so this is what
+        # makes each rollout a directly scannable job.
+        "-o", str(RUNS_DIR),
+        "--job-name", slug,
+        "-y",
+    ]
+    if config is not None:
+        command += ["--config", str(config)]
+    else:
+        command += ["-a", submission_config.SUBMISSION_ADAPTER, "-m", MODEL]
+
+    return command + [
+        "--ae", f"SUBMISSION_REPO_URL={job['repo_url']}",
+        "--ae", f"SUBMISSION_COMMIT={job['commit']}",
+        # A team forks this repo, so their agent is a directory in it rather
+        # than the whole checkout.
+        "--ae", f"SUBMISSION_SUBDIR={AGENT_SUBDIR}",
+        "--ae", f"GATEWAY_URL={GATEWAY_URL}",
+        "--ae", f"GATEWAY_API_KEY={key}",
+    ]
+
+
+def run_rollout(job: dict, slug: str, attempt: int) -> dict:
     task_path = task_dir(job["task_id"])
     if not task_path.is_dir():
         return {"status": "error", "error": f"unknown task {job['task_id']}"}
 
-    # A key per rollout is what makes the token count attributable and
-    # server-side. Rate limited so one runaway loop cannot starve the queue.
-    key = mint_key(f"{job['submission_id']}--{job['task_id']}", rpm=RATE_LIMIT_RPM)
+    with tempfile.TemporaryDirectory(prefix="submission-") as checkout:
+        # The submitted commit decides the harness, because that is what
+        # `agent.yaml` promises and what `just eval` runs locally. A config that
+        # cannot be graded is a note on the result, not a failed rollout.
+        config, agent, note = submission_config.resolve(job, Path(checkout), MODEL)
+        if note:
+            print(f"!! {job['task_id']}: {note}", file=sys.stderr, flush=True)
 
-    started = time.monotonic()
+        # A key per rollout is what makes the token count attributable and
+        # server-side. Rate limited so one runaway loop cannot starve the queue.
+        # Inside the try/except: a gateway hiccup here is an infrastructure
+        # failure like any other, and it belongs on a recorded row rather than
+        # escaping to the poll loop unrecorded.
+        try:
+            key = mint_key(
+                f"{job['submission_id']}--{job['task_id']}--{attempt}", rpm=RATE_LIMIT_RPM
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "error": f"minting a gateway key: {exc}"[:1000]}
+
+        started = time.monotonic()
+        try:
+            proc = subprocess.run(
+                harbor_command(job, slug, task_path, config, key["key"]),
+                capture_output=True,
+                text=True,
+                # harbor is installed as a uv tool, so the repo is not on its
+                # sys.path and the submission adapter would not import.
+                env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+            )
+            duration = time.monotonic() - started
+
+            result = parse_trial(RUNS_DIR / slug)
+            result["duration_s"] = round(duration, 1)
+            result["agent"] = agent
+            if note:
+                result["notes"] = note[:1000]
+            if result.get("status") == "error" and not result.get("error"):
+                result["error"] = proc.stderr[-1000:]
+
+            # Best effort: a submission that did not record its conversation is
+            # still a graded submission, and losing the view is not worth losing
+            # the score.
+            trial = trial_dir(RUNS_DIR / slug)
+            if trial:
+                try:
+                    trajectory.convert(trial, agent=agent, version=job["commit"][:8], model=MODEL)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"!! trajectory: {exc}", file=sys.stderr, flush=True)
+
+            result.update(metering(key["key"], result))
+            return result
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:1000]}
+        finally:
+            # A leaked key stays billable and rate-limit-bearing, so retire it
+            # even when the rollout blew up.
+            with contextlib.suppress(Exception):
+                delete_key(key["key"])
+
+
+def metering(key: str, result: dict) -> dict:
+    """Token counts from the gateway, never from the trial.
+
+    The trial reports whatever participant code told it. Read even on failure: a
+    crashed rollout still spent what it spent.
+
+    Best effort, deliberately. Metering is not the grade, and a graded rollout
+    thrown away because the admin API blinked costs the team a task and the
+    fleet another 142 seconds. The row carries the failure instead, so a
+    suspiciously cheap submission can be told apart from a genuinely cheap one.
+    """
     try:
-        proc = subprocess.run(
-            [
-                "harbor", "run",
-                "-p", str(task_path),
-                "-a", "harness.submission_agent:Submission",
-                "-m", MODEL,
-                "-n", "1",
-                # The job name is the directory harbor creates under -o, so this
-                # is what makes each rollout a directly scannable job.
-                "-o", str(RUNS_DIR),
-                "--job-name", slug,
-                "-y",
-                "--ae", f"SUBMISSION_REPO_URL={job['repo_url']}",
-                "--ae", f"SUBMISSION_COMMIT={job['commit']}",
-                # A team forks this repo, so their agent is a directory in it
-                # rather than the whole checkout.
-                "--ae", f"SUBMISSION_SUBDIR={AGENT_SUBDIR}",
-                "--ae", f"GATEWAY_URL={GATEWAY_URL}",
-                "--ae", f"GATEWAY_API_KEY={key['key']}",
-            ],
-            capture_output=True,
-            text=True,
-            # harbor is installed as a uv tool, so the repo is not on its
-            # sys.path and the submission adapter would not import.
-            env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
-        )
-        duration = time.monotonic() - started
-
-        result = parse_trial(RUNS_DIR / slug)
-        result["duration_s"] = round(duration, 1)
-        if result.get("status") == "error" and not result.get("error"):
-            result["error"] = proc.stderr[-1000:]
-
-        # Best effort: a submission that did not record its conversation is
-        # still a graded submission, and losing the view is not worth losing
-        # the score.
-        trial = trial_dir(RUNS_DIR / slug)
-        if trial:
-            try:
-                trajectory.convert(trial, agent="submission", version=job["commit"][:8], model=MODEL)
-            except Exception as exc:  # noqa: BLE001
-                print(f"!! trajectory: {exc}", file=sys.stderr, flush=True)
-
-        # Tokens come from the gateway, never from the trial, because the
-        # trial reports whatever participant code told it. Read even on
-        # failure: a crashed rollout still spent what it spent.
-        result.update(usage_for_key(key["key"]))
-        return result
+        usage = usage_for_key(key)
     except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:1000]}
-    finally:
-        # A leaked key stays billable and rate-limit-bearing, so retire it even
-        # when the rollout blew up.
-        delete_key(key["key"])
+        print(f"!! metering: {exc}", file=sys.stderr, flush=True)
+        return {"metering": f"unread: {type(exc).__name__}"}
+
+    if result.get("status") == "done" and not usage.get("requests"):
+        usage["metering"] = "no requests recorded against this key"
+    return usage
 
 
 def trial_dir(job_dir: Path) -> Path | None:
@@ -167,44 +243,54 @@ def viewer_slug(submission_id: str, task_id: str) -> str:
 
 
 def record(job: dict, result: dict) -> None:
-    table.put_item(Item=results.rollout_item(job, result))
+    table().put_item(Item=results.rollout_item(job, result))
 
 
 def handle(message: dict) -> None:
     job = json.loads(message["Body"])
-    print(f"-> {job['submission_id']} / {job['task_id']}", flush=True)
+    attempt = int(message.get("Attributes", {}).get("ApproximateReceiveCount", 1))
+    print(f"-> {job['submission_id']} / {job['task_id']} (attempt {attempt})", flush=True)
 
     slug = viewer_slug(job["submission_id"], job["task_id"])
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    result = run_rollout(job, slug)
+    result = run_rollout(job, slug, attempt)
     result["job_dir"] = str(RUNS_DIR / slug)
     record(job, result)
 
     # An infrastructure error is not a score. Recorded first so the row is never
     # missing, then raised so SQS redelivers and the retry overwrites this row
-    # on the same key. Two failures reach the DLQ, which is where a genuinely
-    # broken rollout belongs -- not on the board as a zero the team earned.
+    # on the same key. Five failures reach the DLQ, and the row left behind says
+    # `error`, which keeps the submission off the frontier rather than putting
+    # it there with a zero the team never earned. `just ops::redrive` puts those
+    # rollouts back on the queue.
     if result.get("status") == "error":
         raise RuntimeError(result.get("error", "rollout errored"))
 
     print(f"<- {job['task_id']} done", flush=True)
 
 
-def release(receipt_handle: str) -> None:
-    """Hand the in-flight message straight back to the queue.
+def release(receipt_handle: str, delay: int = 0) -> None:
+    """Hand the in-flight message back to the queue.
 
     ECS stops a task with SIGTERM and kills it shortly after, which is far less
     time than a rollout needs, so the work is lost either way. What must not be
     lost is the message: left alone it stays invisible for the whole visibility
-    timeout before another worker can retry it, and every restart spends one of
-    its few attempts. Resetting visibility to zero makes the retry immediate.
+    timeout -- forty minutes -- before another worker can retry it, and every
+    restart spends one of its few attempts.
+
+    Zero on shutdown, where another worker can take it immediately. A backoff on
+    failure, where retrying instantly would just burn the attempts.
     """
     with contextlib.suppress(Exception):
-        sqs.change_message_visibility(
+        queue().change_message_visibility(
             QueueUrl=QUEUE_URL,
             ReceiptHandle=receipt_handle,
-            VisibilityTimeout=0,
+            VisibilityTimeout=delay,
         )
+
+
+def backoff(attempt: int) -> int:
+    return min(RETRY_BACKOFF_SEC * 2 ** max(attempt - 1, 0), MAX_BACKOFF_SEC)
 
 
 def ensure_base_image() -> None:
@@ -245,6 +331,11 @@ def ensure_base_image() -> None:
 
 
 def main() -> int:
+    if not QUEUE_URL:
+        # Read from the environment rather than required at import, so the
+        # self-checks can run without one; still not optional to actually run.
+        raise SystemExit("QUEUE_URL is not set")
+
     print(f"polling {QUEUE_URL}", flush=True)
     ensure_base_image()
 
@@ -264,23 +355,30 @@ def main() -> int:
     signal.signal(signal.SIGINT, on_terminate)
 
     while True:
-        response = sqs.receive_message(
+        response = queue().receive_message(
             QueueUrl=QUEUE_URL,
             MaxNumberOfMessages=1,
             WaitTimeSeconds=20,
+            # How many times this rollout has already been delivered, which is
+            # what the retry backoff and the key alias are keyed on.
+            AttributeNames=["ApproximateReceiveCount"],
         )
         for message in response.get("Messages", []):
             in_flight = message["ReceiptHandle"]
             try:
                 handle(message)
             except Exception as exc:  # noqa: BLE001
-                # Leave it on the queue: a retry may well succeed, and the
-                # redrive policy bounds how many times that can happen.
-                print(f"!! {exc}", file=sys.stderr, flush=True)
+                # Back on the queue now rather than in forty minutes: the
+                # visibility timeout is sized for a rollout that is still
+                # running, and this one is not.
+                attempt = int(message.get("Attributes", {}).get("ApproximateReceiveCount", 1))
+                delay = backoff(attempt)
+                print(f"!! {exc} (retry in {delay}s)", file=sys.stderr, flush=True)
+                release(message["ReceiptHandle"], delay)
                 continue
             finally:
                 in_flight = None
-            sqs.delete_message(
+            queue().delete_message(
                 QueueUrl=QUEUE_URL,
                 ReceiptHandle=message["ReceiptHandle"],
             )
@@ -293,7 +391,31 @@ def _demo() -> None:
     # The repeat suffix must not survive as `#`, which would truncate the URL.
     assert viewer_slug("a-385471d7", "incremental-dupes#3") == "a-385471d7__incremental-dupes-3"
     assert "#" not in viewer_slug("t-1", "x#9")
-    print("ok")
+
+    # Backoff climbs and then stops, well inside the visibility timeout: a
+    # message released for longer than that is invisible for the wrong reason.
+    assert [backoff(n) for n in (1, 2, 3)] == [30, 60, 120]
+    assert backoff(20) == MAX_BACKOFF_SEC
+
+    job = {"repo_url": "https://github.com/t/a", "commit": "c" * 40, "task_id": "x"}
+    # A submitted config names the agent, so -a and -m must not also be there.
+    with_config = harbor_command(job, "s", Path("/tasks/x"), Path("/tmp/c.yaml"), "sk-1")
+    assert "--config" in with_config and "-a" not in with_config and "-m" not in with_config
+    # Without one, the pinned adapter runs the team's own entrypoint.
+    without = harbor_command(job, "s", Path("/tasks/x"), None, "sk-1")
+    assert without[without.index("-a") + 1] == submission_config.SUBMISSION_ADAPTER
+    # The runner owns the task, the repeat count and the output directory in
+    # both cases: a config that set them would be grading something else.
+    for command in (with_config, without):
+        assert command[command.index("-n") + 1] == "1"
+        assert command[command.index("-p") + 1] == "/tasks/x"
+
+    # Metering never turns a graded rollout into an infrastructure failure.
+    graded = {"status": "done", "passed": True}
+    assert metering("sk-unreachable", graded)["metering"].startswith("unread:")
+    assert graded["status"] == "done"
+
+    print("worker ok")
 
 
 if __name__ == "__main__":

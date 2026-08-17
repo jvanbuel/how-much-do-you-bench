@@ -130,10 +130,32 @@ api: build-frontend
 worker:
     cd ops/platform && uv run --with boto3 --with requests python -m worker.main
 
-# Self-checks for the ranking rules and the dashboard helpers.
+# Self-checks for the ranking rules, the results table and the runner.
+#
+# No AWS: everything with logic in it is exercised against local values, which
+# is the only reason these are worth running before a deploy rather than after.
 test:
     PYTHONPATH=ops/platform python3 ops/platform/common/scoring.py
+    cd ops/platform && uv run --quiet --with boto3 python -m common.results
+    cd ops/platform && uv run --quiet --with boto3 --with requests --with pyyaml python -m worker.submission_config
+    cd ops/platform && DEMO=1 uv run --quiet --with boto3 --with requests --with pyyaml python -m worker.main
     node ops/frontend/src/lib/scoring.test.mjs
+
+# Put dead-lettered rollouts back on the queue.
+#
+# A rollout that failed five times is recorded as an error and deliberately does
+# not count as a completed task, so the submission waits rather than being
+# ranked on a task nobody ran. This is how it stops waiting: fix the cause, then
+# move the messages back. Safe to run twice -- a rollout that has since
+# succeeded overwrites its own row again.
+redrive:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ACCOUNT=$(AWS_PROFILE={{aws_profile}} aws sts get-caller-identity --query Account --output text)
+    MAIN="arn:aws:sqs:{{aws_region}}:$ACCOUNT:de-benchmark-rollouts"
+    AWS_PROFILE={{aws_profile}} aws sqs start-message-move-task --region {{aws_region}} \
+      --source-arn "$MAIN-dlq" --destination-arn "$MAIN" >/dev/null
+    echo "dead-lettered rollouts moving back onto the queue"
 
 # --- deployment -------------------------------------------------------------
 

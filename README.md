@@ -73,7 +73,8 @@ just eval            # run agent/ against a sample task
 just calibrate       # oracle must score 1.0, nop must score 0.0
 just api             # builds the frontend, serves it and /results on :8000
 just worker          # polls SQS, runs rollouts, writes DynamoDB
-just test            # scoring rules self-check
+just test            # scoring, results table and runner self-checks
+just ops::redrive    # put dead-lettered rollouts back on the queue
 just gateway         # a local LiteLLM instead of the deployed one
 ```
 
@@ -90,15 +91,21 @@ The fleet is the entire bill, so it is a variable rather than a default:
 
 | Preset | Hosts | Concurrent rollouts | Per hour | 5-hour event | Left running 30 days |
 |---|---|---|---|---|---|
-| `dev` | 1 x c7i.xlarge | 1 | $0.20 | $1 | $147 |
-| `event` | 4 x c7i.2xlarge | 12 | $1.63 | $8 | $1,173 |
+| `dev` | 1 x c7g.xlarge | 1 | $0.20 | $1 | $147 |
+| `event` | 6 x c7g.2xlarge | 12 | $2.45 | $12 | $1,760 |
 | `off` | none | 0 | $0 | - | $0 |
 
-Four small hosts cost the same per hour as one large one and lose a quarter of
+Small hosts cost the same per hour as fewer large ones and lose a fraction of
 the in-flight rollouts if a host dies rather than all of them. Bedrock is not
 the cost: 1000 rollouts at the measured $0.003976 is about $4 for the whole
 event, so leaving the fleet up overnight costs more than running the benchmark
 ten times.
+
+Two rollouts per host, not three: a replica reserves the worst task in the
+suite, and three tasks ask for 6GiB. `terraform output task_budgets` prints what
+the suite currently demands, and both the fleet size and the queue's visibility
+timeout are derived from it -- a task that grows its budget moves them on the
+next apply rather than quietly oversubscribing the hosts.
 
 Most development needs no fleet at all. `just eval` runs the identical rollout
 on your laptop for nothing, through the same Harbor path the workers use, so
@@ -227,12 +234,32 @@ The key is minted per rollout and retired in a `finally`, so token counts are
 the gateway's rather than the graded code's, and a crashed rollout still cannot
 leak a billable key. An infrastructure failure is recorded and re-raised so SQS
 redelivers it: a rollout that never ran must not reach the board as a zero the
-team earned.
+team earned. After the last attempt the row that is left says `error`, and an
+errored row is not a completed task, so the submission waits instead of being
+ranked on a rollout nobody ran. `just ops::redrive` is how it stops waiting.
+
+Reading the meter is best effort, and deliberately not part of that: a graded
+rollout is never thrown away because the gateway's admin API blinked. The row
+carries the failure instead, and the board counts it, so a suspiciously cheap
+submission can be told apart from a genuinely cheap one.
+
+The harness a submission is graded with comes from the `agent.yaml` in its own
+commit, which is the file participants are told decides what runs and the one
+`just eval` uses. The worker fetches that commit, takes the first entry under
+`agents:`, and refuses the fields that are not a team's to set -- `mounts` and
+`env` most of all, because this process drives the host's Docker daemon and a
+bind mount named in a submitted config would be resolved on the host.
 
 ## How a submission flows
 
-1. `POST /submit {team, repo_url, commit}`.
-2. The API writes a `_meta` row and enqueues one SQS message per task.
+1. `POST /submit {team, repo_url, commit}`. The team name is a key prefix, a
+   directory on EFS and a path segment in every trace URL, so it is constrained
+   here rather than escaped three times; `repo_url` must be https on a known
+   host, because git's `ext::` transport runs a command rather than fetching a
+   repository, and both the worker and the task container clone it.
+2. The API spends one of the team's five submissions with a conditional update
+   -- two people hitting submit at once cannot both be the fifth -- then writes
+   a `_meta` row and enqueues one SQS message per task.
 3. A worker clones the commit into the task container, runs the team's
    entrypoint, then runs the verifier and writes one DynamoDB row.
 4. The dashboard scans DynamoDB and draws the Pareto frontier.
@@ -301,9 +328,14 @@ just team-keys alpha beta ...   # one key per team, printed once
 - [ ] Load test at peak: ~17 concurrent rollouts plus ten teams iterating
       locally, all against one account's throughput.
 - [ ] Pick the executor once a real rollout has been timed.
-- [ ] Restrict egress on the Linux worker hosts to the gateway, so a submission
-      cannot quietly call a stronger model. Harbor's own allowlist only engages
-      on Linux, which is why this lives on the host.
+- [ ] Restrict egress on the Linux worker hosts, so a submission cannot quietly
+      call a stronger model. Harbor's own allowlist only engages on Linux, which
+      is why this lives on the host. It has to be an **allowlist, not
+      gateway-only**: nineteen of the task images install from the network at
+      build time, and both the worker and the task container fetch the
+      submission from GitHub. Gateway, GitHub, PyPI, npm and ECR at a minimum,
+      and rehearse it -- a rule that only lets the gateway through fails every
+      task image build rather than the one thing it was aimed at.
 - [ ] Decide whether teams get the Responses API through the gateway. Without
       it they cannot see the model's reasoning, which is a real handicap for a
       hackathon about inspecting trajectories.

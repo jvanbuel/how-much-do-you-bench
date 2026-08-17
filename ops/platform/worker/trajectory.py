@@ -92,8 +92,11 @@ def build(conversation: dict, *, agent: str, version: str, model: str) -> dict:
 def convert(trial_dir: Path, **kwargs) -> bool:
     """Turn the submission's own record into the file the viewer reads.
 
-    False when the submission wrote nothing, which is what a team that replaced
-    the harness and dropped `record()` will see.
+    False when there is nothing at TRAJECTORY_PATH, which covers both cases: a
+    team that replaced the harness and dropped `record()`, and a team graded on
+    an off-the-shelf harness, whose Harbor adapter has already written its own
+    trajectory. Returning early rather than writing an empty one is what keeps
+    this from overwriting that.
     """
     source = trial_dir / "agent" / "messages.json"
     if not source.is_file():

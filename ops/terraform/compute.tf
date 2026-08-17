@@ -312,8 +312,11 @@ resource "aws_lb_target_group" "api" {
   target_type = "ip"
   vpc_id      = data.aws_vpc.default.id
 
+  # /health, not /results: /results scans DynamoDB, so health checking it meant
+  # a full table scan every thirty seconds per target and a throttled scan would
+  # have taken the dashboard out for being unhealthy.
   health_check {
-    path    = "/results"
+    path    = "/health"
     matcher = "200"
   }
 }
