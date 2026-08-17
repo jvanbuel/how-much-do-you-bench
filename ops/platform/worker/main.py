@@ -9,6 +9,7 @@ enforces the split.
 """
 
 import contextlib
+import fcntl
 import json
 import os
 import signal
@@ -215,20 +216,32 @@ def ensure_base_image() -> None:
     from here to the daemon over the socket, so a path inside this container is
     fine (a bind mount would not be: those resolve on the host).
 
-    Every replica calls this and only the first does any work; the rest hit the
-    layer cache. Cheaper than coordinating, and correct if a host is replaced.
+    Serialized on a lock, and that is the whole point rather than tidiness: twelve
+    replicas building at once produced twelve distinct base images, three per
+    host, so every task image built afterwards shared nothing with its
+    neighbours. That is what filled a 98GB disk before the shared base existed.
+    Holding the lock means the first build populates the daemon cache and the
+    replicas behind it resolve to the identical image id.
+
+    The lock lives on the shared jobs filesystem, so it also spaces out the four
+    hosts. Cold start pays for that once, in series.
     """
-    result = subprocess.run(
-        ["docker", "build", "-q", "-t", "hmdyb-task-base:1", str(TASKS_DIR / "base")],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        # Not fatal here: every rollout would fail on it anyway, and the error
-        # belongs on the rollout that hit it rather than in a startup crash loop.
-        print(f"!! base image build failed: {result.stderr[-500:]}", file=sys.stderr, flush=True)
-    else:
-        print(f"base image ready: {result.stdout.strip()}", flush=True)
+    lock_path = JOBS_DIR / ".base-build.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        result = subprocess.run(
+            ["docker", "build", "-q", "-t", "hmdyb-task-base:1", str(TASKS_DIR / "base")],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            # Not fatal here: every rollout would fail on it anyway, and the
+            # error belongs on the rollout that hit it rather than in a startup
+            # crash loop.
+            print(f"!! base image build failed: {result.stderr[-500:]}", file=sys.stderr, flush=True)
+        else:
+            print(f"base image ready: {result.stdout.strip()}", flush=True)
 
 
 def main() -> int:

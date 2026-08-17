@@ -172,8 +172,16 @@ resource "aws_ecs_task_definition" "worker" {
   # VPC's private DNS zone.
   network_mode             = "bridge"
   requires_compatibilities = ["EC2"]
-  cpu                      = 256
-  memory                   = 512
+
+  # Reserves what a replica *causes* to run, not what its own process uses. The
+  # rollout container is a sibling started over the Docker socket, so ECS never
+  # sees it: with the honest-looking 256/512 here, twelve replicas fit one host
+  # on paper, managed scaling took the fleet from four instances to one, and all
+  # twelve landed together -- 24 vCPU and 48GiB of rollouts asked of 8 and 16.
+  # Matching task.toml's cpus/memory_mb makes placement and scaling agree with
+  # what actually runs: three replicas per c7g.2xlarge, four hosts for twelve.
+  cpu                      = 2048
+  memory                   = 4608
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.worker_task.arn
 
