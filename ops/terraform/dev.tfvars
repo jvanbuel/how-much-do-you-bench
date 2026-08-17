@@ -15,4 +15,4 @@ worker_replicas      = 1
 # Four repeats of the one task: the table is keyed (submission_id, task_id), so
 # distinct ids are what make four runs four rows instead of one overwritten
 # row. passed/4 then reads as that group's pass rate.
-task_ids = "incremental-dupes,airflow-assets"
+task_ids = "incremental-dupes,airflow-assets,airflow-parse-cost,terraform-rekey,dbt-scd2,polars-vectorise"
