@@ -1,0 +1,47 @@
+schema_version = "1.3"
+artifacts = []
+
+[task]
+name = "hackathon/log-rotation"
+description = "Fix a rotation script that keeps the wrong files and deletes the right ones"
+authors = []
+keywords = ["bash", "linux", "find"]
+
+[metadata]
+category = "data-engineering"
+difficulty_explanation = """
+A rotation script whose three bugs are all in `find` and shell quoting.
+
+`-mtime 7` means exactly seven days ago rather than older than seven, so nothing
+old gets rotated. `-mtime -90` deletes the archives younger than 90 days, the exact
+inverse of the retention it claims. And a `for` loop over `$(find ...)` with
+unquoted expansions splits a filename on its spaces. The script runs cleanly and
+reports success in every case.
+"""
+
+[verifier]
+timeout_sec = 600.0
+collect = []
+
+[verifier.env]
+
+[agent]
+timeout_sec = 900.0
+
+# ponytail: network_mode stays "public" because Harbor's docker egress control
+# only engages on Linux hosts, and participants run these tasks on macOS
+# laptops. Egress for *scored* runs is restricted on the Linux worker host
+# instead, which covers the harness process too. Flip this to
+# network_mode = "allowlist" if local runs ever stop needing to work on macOS.
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 1800.0
+os = "linux"
+cpus = 2
+memory_mb = 4096
+mcp_servers = []
+
+[environment.env]
+
+[solution.env]

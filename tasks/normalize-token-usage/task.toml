@@ -1,0 +1,29 @@
+schema_version = "1.3"
+artifacts = []
+
+[task]
+name = "hackathon/normalize-token-usage"
+description = "Self-hosted-LLM benchmark exercise 09-normalize-token-usage (python)"
+authors = []
+keywords = ["selfhosted-llm", "python"]
+
+[metadata]
+language = "python"
+
+[verifier]
+timeout_sec = 300.0
+
+[verifier.env]
+
+[agent]
+timeout_sec = 1200.0
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 900.0
+os = "linux"
+cpus = 2
+memory_mb = 4096
+mcp_servers = []
+
+[environment.env]
