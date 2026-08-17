@@ -1,0 +1,7 @@
+warehouse:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: /app/warehouse.duckdb
+      threads: 1

@@ -1,0 +1,7 @@
+jobs/
+__pycache__/
+.terraform/
+*.tfstate*
+.env
+ops/terraform/backend.hcl
+.claude/

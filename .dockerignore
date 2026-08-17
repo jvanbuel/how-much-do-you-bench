@@ -1,0 +1,10 @@
+# Host node_modules are macOS binaries and would overwrite the image's own,
+# which is what made pnpm try to wipe the modules dir mid-build.
+**/node_modules
+**/.venv
+jobs/
+.jj/
+.git/
+ops/terraform/.terraform/
+ops/platform/static/
+.env

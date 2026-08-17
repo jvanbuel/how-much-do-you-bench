@@ -1,0 +1,64 @@
+# Your harness configuration.
+#
+# This is the file to edit when you want a different harness, a skill, or an MCP
+# server. It is Harbor's own JobConfig, so nothing here is a translation layer
+# that can drift from what actually runs.
+#
+#   just eval           # run this config against a task
+#   just show-config    # print what it resolves to, without running anything
+#
+# `agents` is a list. Adding a second entry runs both against the same task in
+# the same command, which is the cheapest way to find out whether your careful
+# context engineering actually beats an off-the-shelf harness.
+
+agents:
+  # The baseline: an off-the-shelf harness, installed into the task container
+  # for you. Beat it, or work out why you cannot.
+  #
+  # `openai/gemma` is provider/model, which is how opencode names things. The
+  # provider is openai because the gateway speaks that API, not because the
+  # model is.
+  - name: opencode
+    model_name: openai/gemma
+    skills: []
+    mcp_servers: []
+    kwargs: {}
+
+  # Your own harness: the `agent/` directory in this repo, run as
+  # `uv run agent --instruction ...`. Uncomment to grade your code instead.
+  #
+  # - name: submission
+  #   import_path: harness.submission_agent:Submission
+  #   model_name: gemma
+  #   skills: []
+  #   mcp_servers: []
+  #   kwargs: {}
+
+  # Claude Code mostly does NOT work against this model. Its requests reach the
+  # gateway and some succeed, but most come back as an opaque engine error
+  # ("Job registration failed ... Generation failed"). The gateway already
+  # strips the reasoning request and forbids parallel tool calls on its behalf
+  # (see ops/gateway/hooks.py), which fixed the first failure but not this one.
+  # Try it if you like; do not plan your afternoon around it.
+  #
+  # - name: claude-code
+  #   model_name: gemma
+
+  # Attaching skills and MCP servers looks like this, on any agent above.
+  #
+  # - name: mini-swe-agent
+  #   model_name: gemma
+  #   skills:
+  #     # A local directory, or a git source like `org/repo@ref`.
+  #     - ./skills/data-engineering
+  #   mcp_servers:
+  #     - name: duckdb
+  #       transport: stdio
+  #       command: uvx
+  #       args: ["mcp-server-duckdb", "--db", "/app/warehouse.duckdb"]
+  #   kwargs:
+  #     max_turns: 40
+
+  # Harbor also ships adapters for aider, codex, copilot-cli, cursor-cli,
+  # gemini-cli, goose, hermes, kimi-cli, langgraph, opencode, openhands,
+  # qwen-code, swe-agent, terminus-2 and trae-agent.
