@@ -38,5 +38,18 @@ RUN apt-get update \
     && . "$NVM_DIR/nvm.sh" \
     && nvm install 22 \
     && npm i -g opencode-ai@latest @anthropic-ai/claude-code @openai/codex \
-         @google/gemini-cli @qwen-code/qwen-code \
+         @google/gemini-cli @qwen-code/qwen-code @mariozechner/pi-coding-agent \
     && npm cache clean --force
+
+# uv, and the interpreter and tools the pip-installed harnesses want. swe-agent
+# re-clones its own repo every run, so pre-cloning is pointless -- but it checks
+# for uv before fetching it, and `uv python install 3.12` and a warm uv cache are
+# the downloads worth removing. aider's installer is uv-based, so a pre-installed
+# aider-chat resolves from cache instead of the network.
+ENV UV_LINK_MODE=copy
+# uv tool installs land here; harbor's aider adapter sources this itself, but a
+# harness that just calls `aider` should find it too.
+ENV PATH="/root/.local/bin:$PATH"
+RUN uv python install 3.12 \
+    && uv tool install aider-chat \
+    && uv cache prune --ci || true

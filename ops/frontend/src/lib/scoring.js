@@ -20,14 +20,19 @@ export function duration(seconds) {
 
 /** Submission time in the viewer's own timezone, to the minute.
  *
- * A date is not shown: every submission in an event lands on the same day, so
- * the date is the column that never varies. */
+ * With the date: a board that outlives one day otherwise shows two submissions
+ * as "09:18" and leaves you to guess which week each belongs to. */
 export function clockTime(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
     ? "—"
-    : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    : d.toLocaleString(undefined, {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
 }
 
 /** Compact axis labels: 900, 9.2k, 10k, 100k, 1M.
