@@ -13,7 +13,7 @@ api_url := env_var_or_default("API_URL", "https://bench.playground.dataminded.cl
 # file rather than a change to this command.
 #
 # Run one task against your agent, no commit needed.
-eval task="incremental-dupes" agent_dir="agent":
+eval task="incremental-dupes" agent_dir="agent": base
     #!/usr/bin/env bash
     set -euo pipefail
     # Harbor will not resume a job directory whose config changed, and this is
@@ -83,7 +83,7 @@ show-config agent_dir="agent":
     PYTHONPATH={{justfile_directory()}}/ops harbor run --config agent.yaml -p tasks/incremental-dupes --print-config
 
 # Confirm a task is solvable and that its verifier actually fails when unsolved.
-calibrate task="incremental-dupes":
+calibrate task="incremental-dupes": base
     rm -rf jobs/oracle jobs/nop
     harbor run -p tasks/{{task}} -a oracle -n 1 -o jobs --job-name oracle -y
     harbor run -p tasks/{{task}} -a nop -n 1 -o jobs --job-name nop -y
@@ -95,6 +95,14 @@ calibrate task="incremental-dupes":
 # See what your agent actually did. Start here after every eval.
 view:
     harbor view jobs
+
+# Every task image starts FROM this one, so it carries the coding harnesses and
+# gets built once instead of per task. Docker skips the work when the layers are
+# already there, so calling this before every run costs nothing after the first.
+#
+# Build the shared base image for the task containers.
+base:
+    docker build -q -t hmdyb-task-base:1 tasks/base
 
 # Everything for running the event: deploy, keys, fleet, reset.
 mod ops "ops/justfile"
