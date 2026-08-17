@@ -1,4 +1,4 @@
-FROM ghcr.io/jvanbuel/hmdyb-task-base:1
+FROM hmdyb-task-base:1
 
 # Pinned so the environment is reproducible and the verifier needs no network.
 RUN pip install --no-cache-dir \

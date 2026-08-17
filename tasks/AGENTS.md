@@ -17,7 +17,11 @@ CMD ["sleep", "infinity"]
 ## Everything starts FROM the shared base
 
 `tasks/base/Dockerfile` carries Debian, node, the harnesses, uv and aider -- about
-2.5GB. Docker shares a layer only when the whole parent chain matches, so a task
+2.5GB. It is tagged `hmdyb-task-base:1` in the local daemon and never pushed
+anywhere: `just base` builds it (and `just eval` and `just calibrate` depend on
+that recipe), and the worker builds it at startup from its own copy of this
+directory. A registry would mean credentials on every laptop and every host for
+an image that is two minutes of build. Docker shares a layer only when the whole parent chain matches, so a task
 that brings its own base (`FROM apache/airflow`, say) shares nothing and stores
 that 2.5GB again. Three tasks did exactly that and filled a 98GB VM disk.
 

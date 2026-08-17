@@ -206,8 +206,34 @@ def release(receipt_handle: str) -> None:
         )
 
 
+def ensure_base_image() -> None:
+    """Build the image every task starts FROM, in the host daemon.
+
+    The task Dockerfiles name a plain local tag rather than a registry, so there
+    is no pull, no credentials and nothing to publish -- the base is built from
+    tasks/base, which ships in this image. `docker build` streams its context
+    from here to the daemon over the socket, so a path inside this container is
+    fine (a bind mount would not be: those resolve on the host).
+
+    Every replica calls this and only the first does any work; the rest hit the
+    layer cache. Cheaper than coordinating, and correct if a host is replaced.
+    """
+    result = subprocess.run(
+        ["docker", "build", "-q", "-t", "hmdyb-task-base:1", str(TASKS_DIR / "base")],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        # Not fatal here: every rollout would fail on it anyway, and the error
+        # belongs on the rollout that hit it rather than in a startup crash loop.
+        print(f"!! base image build failed: {result.stderr[-500:]}", file=sys.stderr, flush=True)
+    else:
+        print(f"base image ready: {result.stdout.strip()}", flush=True)
+
+
 def main() -> int:
     print(f"polling {QUEUE_URL}", flush=True)
+    ensure_base_image()
 
     # The message currently being worked on, so a shutdown signal can put it
     # back. One slot, because a worker handles one rollout at a time.

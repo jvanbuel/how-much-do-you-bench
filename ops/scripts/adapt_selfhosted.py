@@ -21,7 +21,7 @@ import base64
 import shutil
 from pathlib import Path
 
-BASE = "ghcr.io/jvanbuel/hmdyb-task-base:1"
+BASE = "hmdyb-task-base:1"
 
 # Names carry the exercise number upstream. Keep the descriptive half: task ids
 # show up on the dashboard and in job directories.
