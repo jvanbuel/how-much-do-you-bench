@@ -41,7 +41,12 @@ eval task="incremental-dupes" agent_dir="agent":
     # connection error that never mentions TLS. See CORP_CA_FILE in the README.
     if [ -f "${CORP_CA_FILE:-}" ]; then
       MOUNTS+=',{"type":"bind","source":"'"$CORP_CA_FILE"'","target":"/etc/ssl/ca.pem","read_only":true}'
-      CA=(--ae SSL_CERT_FILE=/etc/ssl/ca.pem --ae REQUESTS_CA_BUNDLE=/etc/ssl/ca.pem)
+      # Python, curl and node each look at a different variable, and an agent
+      # that installs itself uses all three.
+      CA=(--ae SSL_CERT_FILE=/etc/ssl/ca.pem
+          --ae REQUESTS_CA_BUNDLE=/etc/ssl/ca.pem
+          --ae CURL_CA_BUNDLE=/etc/ssl/ca.pem
+          --ae NODE_EXTRA_CA_CERTS=/etc/ssl/ca.pem)
     fi
 
     # harbor is a uv tool, so the repo is not on its sys.path.
