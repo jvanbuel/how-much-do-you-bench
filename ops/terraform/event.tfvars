@@ -13,4 +13,9 @@ worker_replicas      = 12
 
 # The graded suite: every task in tasks/. Without this the module default
 # applies, and a submission is scored on one task.
+#
+# Changing this list is only half the change: the worker resolves a task from
+# tasks/ baked into its own image, deliberately, so a team cannot ship its own
+# verifier. Adding a task here without `just ops deploy` gets you a row per task
+# reading "unknown task <id>" and a submission that scores zero.
 task_ids = "airflow-assets,airflow-parse-cost,analyze-multi-run-plot,dbt-scd2,duckdb-nulls,extend-trajectory-multistep,git-secret-history,harbor-analyze-results,harbor-analyze-trajectories,incremental-dupes,log-rotation,normalize-token-usage,polars-vectorise,proxmox-container-ssh-troubleshooting,pyspark-skew,survey-challenges-by-segment,survey-initiatives,survey-normalize,survey-top-challenges,terraform-rekey,voltpulse-alb"
