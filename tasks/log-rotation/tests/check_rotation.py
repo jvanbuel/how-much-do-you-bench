@@ -20,7 +20,10 @@ def state() -> dict[str, bytes]:
     return {str(p.relative_to(ROOT)): p.read_bytes() for p in sorted(ROOT.rglob("*")) if p.is_file()}
 
 
-subprocess.run(["/app/seed_logs.sh"], check=True)
+# The verifier's own copy, not /app/seed_logs.sh. Reseeding with a script the
+# agent can edit means the agent can choose the starting state: seed the tree
+# already rotated and the untouched, still-buggy rotate.sh passes.
+subprocess.run(["bash", "/tests/seed_logs.sh"], check=True)
 first = subprocess.run(["/app/rotate.sh"], capture_output=True, text=True)
 check("first run succeeds", first.returncode == 0, (first.stderr or first.stdout)[-300:])
 after_first = state()
