@@ -141,11 +141,19 @@ class Submission(BaseInstalledAgent):
         if mcp_config:
             env["MCP_CONFIG"] = mcp_config
 
+        # Runs *in* /app, the task workspace, with --project pointing uv at the
+        # submission. Starting in the submission directory instead meant every
+        # relative path an agent used landed outside the tree being graded: one
+        # rollout wrote a correct challenges.py next to its own pyproject.toml
+        # while the verifier read the untouched stub in /app and scored zero.
+        # Doing it here rather than in the baseline agent covers every harness,
+        # since opencode, claude-code and the rest all act on their cwd.
         await self.exec_as_agent(
             environment,
             command=(
-                f"cd {self._project_dir()} && "
-                f"uv run agent --instruction {shlex.quote(instruction)} "
+                "cd /app && "
+                f"uv run --project {self._project_dir()} "
+                f"agent --instruction {shlex.quote(instruction)} "
                 "2>&1 | stdbuf -oL tee /logs/agent/agent.log"
             ),
             env=env,

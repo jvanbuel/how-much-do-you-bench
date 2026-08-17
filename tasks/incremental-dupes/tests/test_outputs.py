@@ -21,7 +21,10 @@ import duckdb
 import pytest
 
 RAW_CSV = Path("/app/data/raw_orders.csv")
-GENERATOR = Path("/app/generate_data.py")
+# The verifier's own copy: regenerating from the agent's copy only catches
+# editing one of the two files, and an agent that rewrites the generator and the
+# feed together gets a feed with no duplicates to deduplicate.
+GENERATOR = Path("/tests/generate_data.py")
 WAREHOUSE = "/app/warehouse.duckdb"
 
 
@@ -57,7 +60,7 @@ def test_raw_feed_untouched():
     whenever the generator changes, and catches edits to either file.
     """
     assert RAW_CSV.is_file(), "raw_orders.csv is missing"
-    assert GENERATOR.is_file(), "generate_data.py is missing"
+    assert GENERATOR.is_file(), "the verifier's generate_data.py is missing"
 
     scratch = Path("/tmp/raw_orders_check.csv")
     subprocess.run(
