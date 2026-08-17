@@ -1,0 +1,4 @@
+Date,Cloud Agent ID,Automation ID,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost
+"2026-03-10T10:00:00.000Z","","","Included","composer-2.5","No","0","100","900","10","1010","Included"
+"2026-03-10T11:30:00.000Z","","","Included","composer-2.5","No","0","200","100","20","320","0.05"
+"2026-03-11T09:00:00.000Z","","","Included","composer-2.5","No","0","300","0","30","330","Included"

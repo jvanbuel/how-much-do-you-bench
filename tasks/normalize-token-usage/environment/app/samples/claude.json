@@ -1,0 +1,26 @@
+{
+  "daily": [
+    {
+      "period": "2026-01-02",
+      "inputTokens": 1000,
+      "outputTokens": 200,
+      "cacheReadTokens": 5000,
+      "cacheCreationTokens": 0,
+      "totalCost": 0.12,
+      "modelsUsed": ["claude-opus-4-8"]
+    },
+    {
+      "period": "2026-01-03",
+      "inputTokens": 2000,
+      "outputTokens": 50,
+      "cacheReadTokens": 0,
+      "cacheCreationTokens": 100,
+      "totalCost": 0.03,
+      "modelsUsed": ["claude-opus-4-8"]
+    }
+  ],
+  "totals": {
+    "inputTokens": 3000,
+    "outputTokens": 250
+  }
+}
