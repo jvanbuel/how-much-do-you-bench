@@ -14,6 +14,18 @@ ENTRYPOINT []
 CMD ["sleep", "infinity"]
 ```
 
+## Everything starts FROM the shared base
+
+`tasks/base/Dockerfile` carries Debian, node, the harnesses, uv and aider -- about
+2.5GB. Docker shares a layer only when the whole parent chain matches, so a task
+that brings its own base (`FROM apache/airflow`, say) shares nothing and stores
+that 2.5GB again. Three tasks did exactly that and filled a 98GB VM disk.
+
+On the shared base, three task images report 2.7-3GB each while the disk holds
+5.9GB in total: one base plus 150-400MB per task. A task that genuinely needs
+another distribution is worth questioning -- installing the dependency on the
+base (`pip install apache-airflow`) is usually cheaper than inheriting an image.
+
 ## Pre-installing the harnesses in a task image
 
 Harbor installs the chosen harness into the task container on every rollout, and
@@ -43,10 +55,7 @@ RUN apt-get update \
     && nvm install 22 \
     && npm i -g \
          opencode-ai@latest \
-         @anthropic-ai/claude-code \
          @openai/codex \
-         @google/gemini-cli \
-         @qwen-code/qwen-code \
          @mariozechner/pi-coding-agent \
     && npm cache clean --force
 ```
