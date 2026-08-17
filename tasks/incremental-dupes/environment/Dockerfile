@@ -37,8 +37,7 @@ RUN apt-get update \
     && curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash \
     && . "$NVM_DIR/nvm.sh" \
     && nvm install 22 \
-    && npm i -g opencode-ai@latest @anthropic-ai/claude-code @openai/codex \
-         @google/gemini-cli @qwen-code/qwen-code @mariozechner/pi-coding-agent \
+    && npm i -g opencode-ai@latest @openai/codex @mariozechner/pi-coding-agent \
     && npm cache clean --force
 
 # uv, and the interpreter and tools the pip-installed harnesses want. swe-agent
