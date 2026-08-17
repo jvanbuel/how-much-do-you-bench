@@ -47,6 +47,7 @@ RUN apt-get update \
          @openai/codex \
          @google/gemini-cli \
          @qwen-code/qwen-code \
+         @mariozechner/pi-coding-agent \
     && npm cache clean --force
 ```
 
@@ -54,6 +55,24 @@ Keep the nvm version and Node major in step with Harbor. If Harbor bumps
 `NVM_VERSION` or `DEFAULT_NODE_MAJOR`, a stale image silently goes back to
 downloading a second Node, which is slower than not pre-installing at all.
 
-Harnesses that install with pip rather than npm (aider, swe-agent) are not
-included: they resolve into the task's own Python environment, and pinning them
-here risks a dependency conflict with what the task itself needs.
+The pip-installed harnesses go through uv, which keeps them out of the task's own
+Python environment:
+
+```dockerfile
+COPY --from=ghcr.io/astral-sh/uv:0.9.7 /uv /uvx /usr/local/bin/
+ENV UV_LINK_MODE=copy
+ENV PATH="/root/.local/bin:$PATH"
+RUN uv python install 3.12 \
+    && uv tool install aider-chat \
+    && uv cache prune --ci || true
+```
+
+swe-agent is deliberately not pre-installed: it runs `rm -rf /opt/sweagent-repo`
+and re-clones every time, so a baked copy is deleted before it is used. What does
+help is already above -- it checks for `uv` before fetching it, and
+`uv python install 3.12` is the download that actually costs time.
+
+`uv tool install` puts binaries in `/root/.local/bin`, hence the PATH line. Note
+that a **login** shell (`bash -lc`) re-sources `/etc/profile` and discards the
+image's PATH, so `command -v aider` can fail there while working fine for the
+harness -- do not chase that as a missing install.
