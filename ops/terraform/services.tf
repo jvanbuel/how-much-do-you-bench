@@ -241,6 +241,21 @@ resource "aws_ecs_service" "worker" {
     weight            = 1
   }
 
+  # Stop before starting. The reservations deliberately fill the hosts, so there
+  # is no room for a replacement task to start alongside the one it replaces:
+  # with the defaults (100/200) ECS holds every new task PENDING forever and the
+  # deployment never completes. A queue consumer can afford this -- SIGTERM
+  # returns the in-flight rollout to the queue, so the cost of stopping first is
+  # one requeued message rather than a lost one.
+  deployment_minimum_healthy_percent = 50
+  deployment_maximum_percent         = 100
+
+  # AZ rebalancing refuses to coexist with maximumPercent <= 100, and it is the
+  # less useful half of the pair here: the placement strategies below already
+  # spread, and a queue consumer does not care if one AZ carries a replica more
+  # after a host is replaced.
+  availability_zone_rebalancing = "DISABLED"
+
   # Spread across instances so losing one host costs a share of the rollouts in
   # flight rather than all of them.
   ordered_placement_strategy {
