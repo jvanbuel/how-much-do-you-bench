@@ -184,10 +184,10 @@ resource "aws_ecs_task_definition" "worker" {
   # a replica that draws a 6GiB task on a host packed for 4GiB ones is an OOM
   # kill that reads as "no trial result produced" and retries five times.
   # +512MiB for this container's own process beside the rollout it starts.
-  cpu                      = local.task_cpus * 1024
-  memory                   = local.task_memory_mb + 512
-  execution_role_arn       = aws_iam_role.execution.arn
-  task_role_arn            = aws_iam_role.worker_task.arn
+  cpu                = local.task_cpus * 1024
+  memory             = local.task_memory_mb + 512
+  execution_role_arn = aws_iam_role.execution.arn
+  task_role_arn      = aws_iam_role.worker_task.arn
 
   volume {
     name      = "docker-socket"

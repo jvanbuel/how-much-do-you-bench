@@ -191,6 +191,13 @@ variable "rate_limit_rpm" {
 # the deployed API to grading a single task.
 #
 # Leave null to grade every task. dev.tfvars sets it to a subset on purpose.
+#
+# Changing what is here is only half the change: the worker resolves a task
+# against the tasks/ baked into its own image, deliberately, so a team cannot
+# ship its own verifier. Apply without `just deploy` and every rollout of the
+# new task records "unknown task <id>", which no longer scores zero -- it holds
+# the submission unfinished until the image catches up and `just ops::redrive`
+# puts the rollouts back. The worker prints the tasks it carries on startup.
 variable "task_ids" {
   type    = string
   default = null

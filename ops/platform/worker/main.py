@@ -12,6 +12,7 @@ import contextlib
 import fcntl
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -47,6 +48,10 @@ AGENT_SUBDIR = os.environ.get("AGENT_SUBDIR", "agent")
 # time to clear. Doubling per attempt, capped well under the visibility timeout.
 RETRY_BACKOFF_SEC = 30
 MAX_BACKOFF_SEC = 900
+
+# Harbor got far enough to write a trial, or it did not. The difference decides
+# whether a failure is the rollout's or the runner's, so it is one string.
+NO_TRIAL = "no trial result produced"
 
 
 # Built on first use, not on import: the self-checks below exercise the parts
@@ -108,6 +113,17 @@ def harbor_command(job: dict, slug: str, task_path: Path, config: Path | None, k
     ]
 
 
+def harbor_run(job: dict, slug: str, task_path: Path, config: Path | None, key: str):
+    return subprocess.run(
+        harbor_command(job, slug, task_path, config, key),
+        capture_output=True,
+        text=True,
+        # harbor is installed as a uv tool, so the repo is not on its sys.path
+        # and the submission adapter would not import.
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+    )
+
+
 def run_rollout(job: dict, slug: str, attempt: int) -> dict:
     task_path = task_dir(job["task_id"])
     if not task_path.is_dir():
@@ -135,17 +151,26 @@ def run_rollout(job: dict, slug: str, attempt: int) -> dict:
 
         started = time.monotonic()
         try:
-            proc = subprocess.run(
-                harbor_command(job, slug, task_path, config, key["key"]),
-                capture_output=True,
-                text=True,
-                # harbor is installed as a uv tool, so the repo is not on its
-                # sys.path and the submission adapter would not import.
-                env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
-            )
-            duration = time.monotonic() - started
-
+            proc = harbor_run(job, slug, task_path, config, key["key"])
             result = parse_trial(RUNS_DIR / slug)
+
+            if rejected_config(config, proc, result):
+                # The runner would not take the submitted config, and a config
+                # the runner will not take must not cost a team the task: the
+                # same rollout runs again on the pinned adapter, which is their
+                # own entrypoint. Without this a config Harbor dislikes fails
+                # every rollout of every submission that carries it, five times
+                # each, all the way to the dead-letter queue.
+                note = f"agent.yaml ignored: the runner refused it ({proc.stderr.strip()[-300:]})"
+                print(f"!! {job['task_id']}: {note}", file=sys.stderr, flush=True)
+                # Harbor will not resume a job directory whose config changed,
+                # so the first attempt's directory has to go before the second.
+                shutil.rmtree(RUNS_DIR / slug, ignore_errors=True)
+                agent, config = "submission", None
+                proc = harbor_run(job, slug, task_path, None, key["key"])
+                result = parse_trial(RUNS_DIR / slug)
+
+            duration = time.monotonic() - started
             result["duration_s"] = round(duration, 1)
             result["agent"] = agent
             if note:
@@ -172,6 +197,21 @@ def run_rollout(job: dict, slug: str, attempt: int) -> dict:
             # even when the rollout blew up.
             with contextlib.suppress(Exception):
                 delete_key(key["key"])
+
+
+def rejected_config(config: Path | None, proc: subprocess.CompletedProcess, result: dict) -> bool:
+    """Did the runner refuse the submitted config before anything ran?
+
+    The signature is a failed run that produced no trial at all: a rollout that
+    started and then died leaves one behind, with whatever the agent managed.
+    Distinguishing the two is what keeps this from re-running a rollout that
+    genuinely failed -- that is the queue's job, not this function's.
+    """
+    return (
+        config is not None
+        and proc.returncode != 0
+        and result.get("error") == NO_TRIAL
+    )
 
 
 def metering(key: str, result: dict) -> dict:
@@ -205,7 +245,7 @@ def trial_dir(job_dir: Path) -> Path | None:
 def parse_trial(job_dir: Path) -> dict:
     trial_path = trial_dir(job_dir)
     if trial_path is None:
-        return {"status": "error", "error": "no trial result produced"}
+        return {"status": "error", "error": NO_TRIAL}
 
     trial = json.loads((trial_path / "result.json").read_text())
 
@@ -336,7 +376,15 @@ def main() -> int:
         # self-checks can run without one; still not optional to actually run.
         raise SystemExit("QUEUE_URL is not set")
 
+    # Which tasks this image carries, said out loud once. The API enqueues the
+    # list terraform derived from the tree at apply time, and the worker resolves
+    # each one against the tasks baked into this image -- deliberately, so a team
+    # cannot ship its own verifier. Applying without `just deploy` therefore
+    # enqueues rollouts nothing can run, and this line is how that is spotted in
+    # the first minute rather than in the results.
+    tasks = sorted(p.parent.name for p in TASKS_DIR.glob("*/task.toml"))
     print(f"polling {QUEUE_URL}", flush=True)
+    print(f"{len(tasks)} tasks in this image: {', '.join(tasks)}", flush=True)
     ensure_base_image()
 
     # The message currently being worked on, so a shutdown signal can put it
@@ -414,6 +462,19 @@ def _demo() -> None:
     graded = {"status": "done", "passed": True}
     assert metering("sk-unreachable", graded)["metering"].startswith("unread:")
     assert graded["status"] == "done"
+
+    # A config the runner refuses is retried once on the pinned adapter, so one
+    # unusable agent.yaml costs a note rather than every rollout carrying it.
+    ok = subprocess.CompletedProcess([], 0, "", "")
+    failed = subprocess.CompletedProcess([], 1, "", "unknown field")
+    config = Path("/tmp/c.yaml")
+    assert rejected_config(config, failed, {"status": "error", "error": NO_TRIAL})
+    # Not when the rollout ran and failed on its own merits: that is the queue's
+    # business, and re-running it here would grade a different agent.
+    assert not rejected_config(config, failed, {"status": "error", "error": "agent timed out"})
+    assert not rejected_config(config, ok, {"status": "done", "passed": False})
+    # And never when the pinned adapter was already what ran.
+    assert not rejected_config(None, failed, {"status": "error", "error": NO_TRIAL})
 
     print("worker ok")
 
