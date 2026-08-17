@@ -118,7 +118,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "QUEUE_URL", value = aws_sqs_queue.rollouts.url },
       { name = "RESULTS_TABLE", value = aws_dynamodb_table.results.name },
       { name = "BENCHMARK_REGION", value = var.region },
-      { name = "TASKS", value = var.task_ids },
+      { name = "TASKS", value = local.task_ids },
       { name = "MAX_SUBMISSIONS", value = tostring(var.max_submissions) },
       { name = "VIEWER_URL", value = var.viewer_replicas > 0 ? "https://${local.traces_fqdn}" : "" },
     ]

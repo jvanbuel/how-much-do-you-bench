@@ -174,9 +174,22 @@ variable "rate_limit_rpm" {
   default = 60
 }
 
+# Derived from the tasks directory rather than restated. Every hand-maintained
+# copy of this list drifted at least once: event.tfvars had six tasks while the
+# suite had twenty-one, and off.tfvars had none at all, which silently reverted
+# the deployed API to grading a single task.
+#
+# Leave null to grade every task. dev.tfvars sets it to a subset on purpose.
 variable "task_ids" {
   type    = string
-  default = "incremental-dupes"
+  default = null
+}
+
+locals {
+  all_task_ids = sort([
+    for f in fileset("${path.module}/../../tasks", "*/task.toml") : dirname(f)
+  ])
+  task_ids = coalesce(var.task_ids, join(",", local.all_task_ids))
 }
 
 variable "max_submissions" {
