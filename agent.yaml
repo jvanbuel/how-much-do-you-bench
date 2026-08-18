@@ -31,10 +31,10 @@
 # if you were scored on something you did not expect.
 
 agents:
-  # Benchmarked harness: codex. One commit per harness, so each submission is
+  # Benchmarked harness: aider. One commit per harness, so each submission is
   # graded on exactly the config in the commit it names.
-  - name: codex
-    model_name: openai/gemma
+  - name: aider
+    model_name: openai/openai/gemma
     skills: []
     mcp_servers: []
     kwargs: {}
