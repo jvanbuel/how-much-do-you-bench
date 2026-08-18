@@ -17,6 +17,34 @@ rate_limit_rpm := env_var_or_default("RATE_LIMIT_RPM", "60")
 # as its master key and the first team-keys call fails with no hint why. Run
 # this once after the first apply.
 #
+# Two passes, because the gateway is both a thing terraform manages and the
+# thing terraform talks to.
+#
+# The litellm provider is configured at plan time, so its key cannot come from a
+# value terraform generates during apply -- an empty api_key makes the provider
+# error, which drops every resource it owns and everything depending on one out
+# of the plan without saying so. It reads LITELLM_API_KEY instead.
+#
+# The first pass settles the gateway: the master key, the task definition
+# carrying its fingerprint, and the service rolling onto it. Only then is the
+# value in SSM the value the running gateway will accept, which is what the
+# second pass authenticates with to mint the team keys.
+#
+# Apply. Use this rather than terraform directly.
+apply +ARGS="-var-file=event.tfvars":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export AWS_PROFILE={{aws_profile}}
+    terraform -chdir=ops/terraform apply {{ARGS}} -target=aws_ecs_service.gateway
+    echo "waiting for the gateway to be running the current master key..."
+    aws ecs wait services-stable --region {{aws_region}} \
+      --cluster de-benchmark --services gateway
+    LITELLM_API_KEY=$(aws ssm get-parameter --region {{aws_region}} \
+      --name /de-benchmark/litellm-master-key --with-decryption \
+      --query Parameter.Value --output text)
+    export LITELLM_API_KEY
+    terraform -chdir=ops/terraform apply {{ARGS}}
+
 # A team key can call /v1 and nothing else: LiteLLM refuses admin routes for a
 # virtual key. The budget is the blast radius if a key leaks, and rpm keeps one
 # runaway practice loop from starving the graded queue.

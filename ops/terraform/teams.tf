@@ -49,11 +49,13 @@ resource "litellm_key" "team" {
   }
 }
 
+# api_key comes from LITELLM_API_KEY in the environment, which `just ops::apply`
+# reads out of SSM. It cannot come from random_password.litellm_master: a
+# provider is configured at plan time, that value is unknown until apply, and the
+# provider rejects an empty key outright -- which silently drops every resource
+# it owns, and every resource depending on one, from the plan.
 provider "litellm" {
   api_base = "https://${local.gateway_fqdn}"
-  # The value terraform generated, not a read-back of it: nothing has to exist
-  # before the first apply.
-  api_key = "sk-${random_password.litellm_master.result}"
 }
 
 # Where a human, and the API, read a team's key. SecureString, so reading one is

@@ -24,9 +24,9 @@ just ops::gateway        # a local LiteLLM instead of the deployed one
 ## Deploying
 
 ```
-terraform -chdir=ops/terraform apply -var-file=dev.tfvars    # while building
-terraform -chdir=ops/terraform apply -var-file=event.tfvars  # on the day
-terraform -chdir=ops/terraform apply -var-file=off.tfvars    # when idle
+just ops::apply -var-file=dev.tfvars      # while building
+just ops::apply -var-file=event.tfvars    # on the day
+just ops::apply -var-file=off.tfvars      # when idle
 just ops::deploy                                             # build, push, roll
 ```
 
@@ -277,16 +277,19 @@ SSM as a SecureString under `/de-benchmark/team-keys/` -- write-only, so the
 value is in the parameter and never in terraform state. Reading one needs AWS
 credentials for this account, and nothing is printed once and lost.
 
-`register-keys` then tells the gateway to accept them, and reconciles: a team
-dropped from `teams.yaml` has its key deleted, which is the half of revocation
-SSM cannot do by itself. So adding or removing a team is a name, an apply, and
-that recipe.
+The `ncecere/litellm` provider registers them, so adding or removing a team is a
+name and an apply -- removing deletes the key at the gateway, which is the half
+of revocation SSM cannot do by itself.
 
-It is a recipe rather than a terraform resource because BerriAI's own provider
-does not work for this. Tested against a live gateway: `litellm_key` ignores the
-`key` argument, mints its own value, and then records no value in state -- `key`
-reads null. The key exists and nobody can ever retrieve it. The raw API honours
-a supplied key and returns it.
+Not BerriAI's own provider, which was tested first and does not work for this:
+`litellm_key` there ignores the `key` argument, mints its own value, and records
+no value in state, so the key it creates can never be retrieved by anyone.
+
+Apply through `just ops::apply` rather than terraform directly. The provider is
+configured at plan time and authenticates with the master key, so the gateway has
+to be settled on that key before the pass that mints team keys. The recipe does
+the two passes and the wait in between; calling terraform directly on a fresh
+account plans no team keys at all and does not say why.
 
 This is why the gateway's admin routes are on the load balancer at all --
 terraform runs where an operator runs. They are master-key authenticated and
