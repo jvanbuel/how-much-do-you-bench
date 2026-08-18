@@ -31,10 +31,11 @@
 # if you were scored on something you did not expect.
 
 agents:
-  # Benchmarked harness: opencode. One commit per harness, so each submission is
+  # Benchmarked harness: aider. One commit per harness, so each submission is
   # graded on exactly the config in the commit it names.
-  - name: opencode
-    model_name: openai/gemma
+  - name: aider
+    # Doubled: harbor's adapter eats the first provider prefix.
+    model_name: openai/openai/gemma
     skills: []
     mcp_servers: []
     kwargs: {}
