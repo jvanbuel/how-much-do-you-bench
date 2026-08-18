@@ -129,6 +129,13 @@ def run_rollout(job: dict, slug: str, attempt: int) -> dict:
     if not task_path.is_dir():
         return {"status": "error", "error": f"unknown task {job['task_id']}"}
 
+    # Redelivery lands on the same slug, and Harbor will not resume a job
+    # directory it did not finish writing -- a worker killed mid-rollout leaves
+    # exactly that. The retry exists to get a clean run, so it starts from a
+    # clean directory. The previous attempt's trace is not worth keeping: it is
+    # the one that did not produce a result.
+    shutil.rmtree(RUNS_DIR / slug, ignore_errors=True)
+
     with tempfile.TemporaryDirectory(prefix="submission-") as checkout:
         # The submitted commit decides the harness, because that is what
         # `agent.yaml` promises and what `just eval` runs locally. A config that
@@ -250,10 +257,16 @@ def parse_trial(job_dir: Path) -> dict:
     trial = json.loads((trial_path / "result.json").read_text())
 
     if trial.get("exception_info"):
-        return {
-            "status": "error",
-            "error": trial["exception_info"]["exception_message"][:1000],
-        }
+        message = trial["exception_info"]["exception_message"][:1000]
+        # Whose failure it was decides whether it is worth retrying. Once the
+        # agent has started, the environment built and the harness installed, so
+        # what blew up is the submitted code -- a team whose agent raises on one
+        # task would otherwise be retried five times, dead-lettered, and left
+        # unfinished, which keeps the whole submission off the board. It ran and
+        # it failed: that is a score of zero, not an incident.
+        if (trial.get("agent_execution") or {}).get("started_at"):
+            return {"status": "done", "passed": False, "rewards": {}, "error": message}
+        return {"status": "error", "error": message}
 
     rewards = (trial.get("verifier_result") or {}).get("rewards") or {}
     # Binary: a task counts only when the verifier is fully satisfied. Partial
@@ -459,9 +472,19 @@ def _demo() -> None:
         assert command[command.index("-p") + 1] == "/tasks/x"
 
     # Metering never turns a graded rollout into an infrastructure failure.
+    # Pointed at a port nothing listens on rather than at the default admin URL,
+    # which answers for any key when `just gateway` happens to be running: the
+    # check would then spend a full settle timeout and assert the wrong branch.
     graded = {"status": "done", "passed": True}
-    assert metering("sk-unreachable", graded)["metering"].startswith("unread:")
-    assert graded["status"] == "done"
+    from worker import gateway
+
+    was = gateway.BASE
+    gateway.BASE = "http://127.0.0.1:1"  # nothing listens on port 1
+    try:
+        assert metering("sk-unreachable", graded)["metering"].startswith("unread:")
+        assert graded["status"] == "done"
+    finally:
+        gateway.BASE = was
 
     # A config the runner refuses is retried once on the pinned adapter, so one
     # unusable agent.yaml costs a note rather than every rollout carrying it.

@@ -24,6 +24,8 @@ from typing import Any
 
 import yaml
 
+from common import repo
+
 # The adapter that runs a team's own `uv run agent` entrypoint. The only import
 # path a submitted config may name, because any other one has to be importable
 # in *this* process, and the team's repo is not on this process's path.
@@ -36,10 +38,7 @@ AGENT_FIELDS = ("name", "import_path", "model_name", "skills", "mcp_servers", "k
 # `org/repo@ref`, Harbor's git skill source, as opposed to a path in the repo.
 GIT_SOURCE = re.compile(r"^[\w.-]+/[\w.-]+@[\w./-]+$")
 
-# Only what the API already accepts, checked again here: this URL is handed to
-# git in a container holding the Docker socket, and git's `ext::` transport
-# would run a command rather than fetch a repository.
-REPO_URL = re.compile(r"^https://[\w.-]+(/[\w.-]+){2,5}$")
+
 
 CLONE_TIMEOUT = 180
 
@@ -54,8 +53,14 @@ def fetch(repo_url: str, commit: str, dest: Path) -> None:
     Single commit rather than a clone, so fetch time is flat however much
     history a team accumulated during the event.
     """
-    if not REPO_URL.fullmatch(repo_url):
-        raise ConfigError(f"repo_url is not an https git URL: {repo_url}")
+    # Checked again here rather than trusted from the queue: this URL is handed
+    # to git in a container holding the Docker socket. Same rule as the API's,
+    # from the same module, including the host allowlist the old copy here left
+    # out.
+    try:
+        repo_url = repo.normalise(repo_url)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ConfigError("commit must be a full 40-character SHA")
 
@@ -97,6 +102,39 @@ def _skill(source: str, root: Path) -> str:
     if not path.is_dir():
         raise ConfigError(f"skill directory not found in the commit: {source}")
     return str(path)
+
+
+# What an off-the-shelf harness calls the thing that decides where its requests
+# go. Named keys rather than a URL scan alone, because a base URL can be built
+# from a host and a port that never spell out "http".
+ENDPOINT_KEYS = re.compile(
+    r"(base_?url|api_?base|endpoint|proxy|provider|host|origin|server)", re.I
+)
+
+
+def _no_endpoints(value: Any, path: str = "kwargs") -> None:
+    """Refuse anything under `kwargs` that could re-point the harness.
+
+    `kwargs` is handed to whichever Harbor adapter `name` selects, and those
+    adapters take provider configuration. `name: opencode` with a config that
+    replaces the generated baseURL sends the run to an endpoint we do not meter:
+    the tokens are spent, the spend log stays empty, and the submission wins the
+    efficiency board on a number it did not earn. One model reached one way is
+    the premise of the event, so this is a refusal rather than a warning.
+    """
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if ENDPOINT_KEYS.search(str(key)):
+                raise ConfigError(
+                    f"{path}.{key} cannot be set on a graded run: the model is "
+                    "reached through the gateway, which is what meters it"
+                )
+            _no_endpoints(item, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _no_endpoints(item, f"{path}[{index}]")
+    elif isinstance(value, str) and re.search(r"https?://", value):
+        raise ConfigError(f"{path} cannot carry a URL on a graded run: {value[:80]}")
 
 
 def _agent(entry: dict, root: Path, model: str) -> dict:
@@ -150,6 +188,7 @@ def _agent(entry: dict, root: Path, model: str) -> dict:
     kwargs = entry.get("kwargs") or {}
     if not isinstance(kwargs, dict):
         raise ConfigError("`kwargs:` must be a mapping")
+    _no_endpoints(kwargs)
     clean["kwargs"] = kwargs
 
     return clean
@@ -267,11 +306,29 @@ def _demo() -> None:
         except ConfigError:
             pass
 
-    # A URL git would execute rather than fetch.
-    for bad in ("ext::sh -c whoami", "file:///etc", "git@github.com:t/a.git"):
-        assert not REPO_URL.fullmatch(bad), bad
-    assert REPO_URL.fullmatch("https://github.com/team/agent")
-    assert REPO_URL.fullmatch("https://github.com/team/agent.git")
+    # kwargs that would send the run somewhere unmetered.
+    for hostile in (
+        {"opencode_config": {"provider": {"openai": {"options": {"baseURL": "https://x/v1"}}}}},
+        {"api_base": "https://elsewhere.example/v1"},
+        {"nested": [{"endpoint": "10.0.0.1:4000"}]},
+    ):
+        try:
+            _no_endpoints(hostile)
+            raise AssertionError(f"accepted {hostile}")
+        except ConfigError:
+            pass
+    _no_endpoints({"reasoning_effort": "none", "max_turns": 40})  # ordinary tuning still passes
+
+    # A URL git would execute rather than fetch, and one on a host we do not
+    # take submissions from. The rule itself lives in common.repo and is checked
+    # there; this asserts that fetch() applies it.
+    for bad in ("ext::sh -c whoami", "file:///etc", "git@github.com:t/a.git",
+                "https://evil.example/team/agent"):
+        try:
+            fetch(bad, "0" * 40, Path("/tmp/never"))
+            raise AssertionError(f"accepted {bad}")
+        except ConfigError:
+            pass
 
     print("submission config ok")
 

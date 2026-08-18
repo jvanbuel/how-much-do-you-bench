@@ -130,6 +130,11 @@ def rollout_item(job: dict, result: dict) -> dict:
 def errored(rollout: dict) -> bool:
     """A rollout that did not run, as opposed to one that ran and failed.
 
+    The split is made in `parse_trial`, on whether the agent ever started. A
+    submitted agent that raises is not an incident to retry: it ran, it scored
+    zero, and it is recorded as done with `passed=False` so the submission can
+    still be ranked. Only a failure before the agent started reaches here.
+
     The worker records the row and then re-raises, so an infrastructure failure
     is visible while SQS retries it. After the last attempt the row is all that
     is left, and counting it as a completed task would put the submission on the

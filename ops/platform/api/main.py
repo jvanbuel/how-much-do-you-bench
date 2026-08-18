@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from common import results
+from common import repo
 from common.scoring import accuracy_board, contenders, pareto
 
 QUEUE_URL = os.environ["QUEUE_URL"]
@@ -29,7 +30,6 @@ VIEWER_URL = os.environ.get("VIEWER_URL", "").rstrip("/")
 # commit's agent.yaml, and the task container clones it again to be graded, so
 # it is not merely a label: git's `ext::` transport runs a command rather than
 # fetching a repository, and https to a known host is the whole defence.
-REPO_HOSTS = tuple(h for h in os.environ.get("REPO_HOSTS", "github.com").split(",") if h)
 
 # The team name is a key prefix, a directory name on EFS and a path segment in
 # every trace URL. Constraining it here is cheaper than escaping it three times.
@@ -50,15 +50,10 @@ class SubmitRequest(BaseModel):
 
 def _repo_url(url: str) -> str:
     """The submission's repository, or a 400 saying which part is wrong."""
-    cleaned = url.strip().removesuffix(".git")
-    match = re.fullmatch(r"https://([\w.-]+)((?:/[\w.-]+){2,5})", cleaned)
-    if not match:
-        raise HTTPException(400, f"repo_url must be an https git URL, not {url!r}")
-    if match.group(1) not in REPO_HOSTS:
-        raise HTTPException(
-            400, f"repo_url must be hosted on {' or '.join(REPO_HOSTS)}, not {match.group(1)}"
-        )
-    return cleaned
+    try:
+        return repo.normalise(url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/submit")

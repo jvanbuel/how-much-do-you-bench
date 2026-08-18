@@ -26,8 +26,13 @@ HEADERS = {"Authorization": f"Bearer {MASTER_KEY}"}
 # of a rollout are usually not in it at the moment the rollout ends. Reading
 # once undercounts, and undercounting is winning on the efficiency board, so the
 # read waits for the count to stop moving instead.
-SETTLE_INTERVAL = 3.0
-SETTLE_TIMEOUT = 30.0
+# Above LiteLLM's proxy_batch_write_at, which defaults to 10s: the spend log is
+# written by a buffered background task, so two reads 3s apart agreed with each
+# other simply by landing inside one flush window and reported an undercount as
+# settled. The timeout has to clear several intervals for the check to mean
+# anything.
+SETTLE_INTERVAL = 12.0
+SETTLE_TIMEOUT = 90.0
 
 # /spend/logs pages in some versions and returns a bare list in others. Asking
 # for a page size we know we would notice hitting is what makes the difference
@@ -73,18 +78,36 @@ def mint_key(alias: str, rpm: int | None = None) -> dict:
         return _post("/key/generate", payload)
 
 
+def _identity(row: dict) -> str:
+    """What makes a spend-log row the same row on a second page.
+
+    request_id when the gateway sends one; otherwise the whole row, which is
+    exact for the repeated-page case this exists to catch.
+    """
+    for field in ("request_id", "id"):
+        if row.get(field):
+            return f"{field}:{row[field]}"
+    return repr(sorted(row.items(), key=lambda kv: kv[0]))
+
+
 def _rows(key: str) -> list[dict]:
     """Every request this key made, over as many pages as the gateway serves."""
     rows: list[dict] = []
+    seen: set[str] = set()
     for page in range(1, MAX_PAGES + 1):
         payload = _get("/spend/logs", {"api_key": key, "page": page, "page_size": PAGE_SIZE})
         batch = payload.get("data", []) if isinstance(payload, dict) else payload
         if not isinstance(batch, list):
             break
-        rows.extend(batch)
         # A version that ignores the paging parameters returns the same rows for
-        # every page, so stop unless the page was full and new.
-        if len(batch) < PAGE_SIZE:
+        # every page, so stop unless the page was full *and* new. Without the
+        # second half, a full page repeated forty times is counted forty times,
+        # and the submission is pushed down the efficiency board on tokens it
+        # never spent.
+        fresh = [r for r in batch if _identity(r) not in seen]
+        seen.update(_identity(r) for r in batch)
+        rows.extend(fresh)
+        if len(batch) < PAGE_SIZE or not fresh:
             break
     return rows
 
