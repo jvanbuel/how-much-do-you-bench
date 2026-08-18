@@ -26,7 +26,13 @@ collect = []
 [verifier.env]
 
 [agent]
-timeout_sec = 900.0
+# Lowered from 900/1200 after measuring four harnesses across the suite: the
+# median rollout finished its agent phase in 29s, and a rollout that had spent
+# its whole budget had essentially never gone on to pass -- it was a harness
+# stuck on one task, not a slow correct answer. The tail is what sets wall
+# clock, because the last rollout cannot be parallelised: one timeout held a
+# submission at 20/21 for thirteen minutes.
+timeout_sec = 300.0
 
 # ponytail: network_mode stays "public" because Harbor's docker egress control
 # only engages on Linux hosts, and participants run these tasks on macOS
