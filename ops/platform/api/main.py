@@ -119,8 +119,9 @@ def submit(request: SubmitRequest, authorization: str = Header(default=None)):
     team = _authenticated(authorization)
     # The body may still name a team, because `just submit your-team` reads
     # naturally and a mismatch is worth saying out loud rather than ignoring.
-    if team and team != team:
-        raise HTTPException(403, f"that key belongs to {team}, not {team}")
+    # The key decides; the name is a label that has to agree with it.
+    if request.team and request.team != team:
+        raise HTTPException(403, f"that key belongs to {team}, not {request.team}")
     # Full hash only. GitHub serves a fetch-by-object request for a full SHA
     # and nothing else, so an abbreviated one is not a shorter way to say the
     # same thing: it is twenty rollouts that fail on checkout twenty minutes
