@@ -62,9 +62,12 @@ submit team:
     git diff --quiet && git diff --cached --quiet \
       || { echo "you have uncommitted changes; commit them first"; exit 1; }
     git fetch -q origin
-    BRANCH=$(git rev-parse --abbrev-ref HEAD)
-    git merge-base --is-ancestor HEAD "origin/$BRANCH" 2>/dev/null \
-      || { echo "HEAD is not on origin/$BRANCH; run: git push"; exit 1; }
+    # Is this commit on the remote, rather than is it on the remote copy of a
+    # branch with the same name. A detached HEAD -- which is how jj leaves a
+    # colocated repository -- has no branch name to compare, and reported an
+    # up-to-date commit as unpushed.
+    git branch -r --contains HEAD 2>/dev/null | grep -q . \
+      || { echo "this commit is not on the remote; run: git push"; exit 1; }
     SHA=$(git rev-parse HEAD)
     URL=$(git remote get-url origin | sed -e 's#^git@github.com:#https://github.com/#' -e 's#\.git$##')
     KEY="${GATEWAY_API_KEY:-${LITELLM_MASTER_KEY:-}}"
