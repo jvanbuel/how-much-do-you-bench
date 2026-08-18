@@ -74,6 +74,17 @@ agents:
   #   kwargs:
   #     max_turns: 40
 
+  # Two harnesses need their model_name spelled a particular way, because
+  # Harbor's adapter rewrites it on the way through:
+  #
+  #   aider  ->  openai/openai/gemma   the adapter eats the first prefix, and
+  #                                    aider needs one of its own
+  #   pi     ->  gateway/gemma         pi ignores OPENAI_BASE_URL entirely, so
+  #                                    the base image gives it a `gateway`
+  #                                    provider in ~/.pi/agent/models.json
+  #
+  # Measured on the full suite: aider 11/21, opencode 8/21, codex 4/21.
+  #
   # Harbor also ships adapters for aider, codex, copilot-cli, cursor-cli,
   # gemini-cli, goose, hermes, kimi-cli, langgraph, opencode, openhands,
   # qwen-code, swe-agent, terminus-2 and trae-agent.
