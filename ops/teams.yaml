@@ -10,6 +10,7 @@
 # Removing one deletes the key at the gateway and the parameter that held it,
 # which is the whole of revocation.
 teams:
-  - alpha
-  - beta
-  - gamma
+  - opencode
+  - pi
+  - aider
+  - codex
