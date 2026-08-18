@@ -87,6 +87,61 @@
     key === sortKey ? (sortDir === "asc" ? "ascending" : "descending") : "none";
 </script>
 
+{#snippet taskTable(row)}
+{#if row.tasks?.length}
+    <table class="tasks">
+      <thead>
+        <tr>
+          <th class="st"><span class="sr-only">Result</span></th>
+          <th>Task</th>
+          <th class="text-right">Duration</th>
+          {#if hasDetail(row.tasks)}<th>Detail</th>{/if}
+          <th><span class="sr-only">Trajectory</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each row.tasks as task (task.task_id)}
+          <tr class:failed={!task.passed}>
+            <!-- The marker is the whole result: a word beside it
+                 said the same thing twice. Screen readers get the
+                 word, since a glyph alone does not carry it. -->
+            <td class="st">
+              <span aria-hidden="true">{task.passed ? "✓" : "✗"}</span>
+              <span class="sr-only">{task.passed ? "passed" : "failed"}</span>
+            </td>
+            <td class="name" title={task.agent ? `ran with ${task.agent}` : ""}>
+              {task.task_id}
+            </td>
+            <td class="text-right tabular">{Math.round(task.duration_s)}s</td>
+            {#if hasDetail(row.tasks)}
+              <!-- Only a real error earns a column: "failed" here
+                   would repeat the marker. -->
+              {@const detail = task.error ?? task.notes ?? ""}
+              <td class="detail" title={detail}>{detail}</td>
+            {/if}
+            <td class="text-right">
+              {#if viewerUrl && task.status === "done"}
+                <a
+                  class="trace"
+                  href={traceUrl(row.submission_id, task.task_id)}
+                  target="_blank"
+                  rel="noopener"
+                  title="Open this rollout's trajectory"
+                >
+                  trace ↗
+                </a>
+              {/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {:else}
+    <p class="muted py-2">No task detail recorded for this submission.</p>
+  {/if}
+
+{/snippet}
+
 <table class="w-full text-sm">
     <thead>
       <tr class="border-surface-300-700 border-b">
@@ -167,65 +222,40 @@
         {#if open}
           <tr class="detail-row">
             <td colspan={columns.length + 2} id="tasks-{row.submission_id}">
-              {#if row.tasks?.length}
-                <table class="tasks">
-                  <thead>
-                    <tr>
-                      <th class="st"><span class="sr-only">Result</span></th>
-                      <th>Task</th>
-                      <th class="text-right">Duration</th>
-                      {#if hasDetail(row.tasks)}<th>Detail</th>{/if}
-                      <th><span class="sr-only">Trajectory</span></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {#each row.tasks as task (task.task_id)}
-                      <tr class:failed={!task.passed}>
-                        <!-- The marker is the whole result: a word beside it
-                             said the same thing twice. Screen readers get the
-                             word, since a glyph alone does not carry it. -->
-                        <td class="st">
-                          <span aria-hidden="true">{task.passed ? "✓" : "✗"}</span>
-                          <span class="sr-only">{task.passed ? "passed" : "failed"}</span>
-                        </td>
-                        <td class="name" title={task.agent ? `ran with ${task.agent}` : ""}>
-                          {task.task_id}
-                        </td>
-                        <td class="text-right tabular">{Math.round(task.duration_s)}s</td>
-                        {#if hasDetail(row.tasks)}
-                          <!-- Only a real error earns a column: "failed" here
-                               would repeat the marker. -->
-                          {@const detail = task.error ?? task.notes ?? ""}
-                          <td class="detail" title={detail}>{detail}</td>
-                        {/if}
-                        <td class="text-right">
-                          {#if viewerUrl && task.status === "done"}
-                            <a
-                              class="trace"
-                              href={traceUrl(row.submission_id, task.task_id)}
-                              target="_blank"
-                              rel="noopener"
-                              title="Open this rollout's trajectory"
-                            >
-                              trace ↗
-                            </a>
-                          {/if}
-                        </td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              {:else}
-                <p class="muted py-2">No task detail recorded for this submission.</p>
-              {/if}
+              {@render taskTable(row)}
             </td>
           </tr>
         {/if}
       {/each}
 
       {#each pending as row (row.submission_id)}
-        <tr class="row pending">
-          <td class="rank"><span class="pulse" aria-hidden="true"></span></td>
+        {@const open = openId === row.submission_id}
+        <tr
+          class="row pending"
+          class:open
+          onclick={() => toggleRow(row.submission_id)}
+        >
+          <!-- Expandable while it runs. The tasks that have finished have
+               finished: their result and their trace exist, and waiting for the
+               other twenty before showing any of them is the difference between
+               watching a run and waiting for one. -->
+          <td class="rank">
+            <button
+              type="button"
+              class="disclosure"
+              aria-expanded={open}
+              aria-controls="tasks-{row.submission_id}"
+              onclick={(e) => {
+                e.stopPropagation();
+                toggleRow(row.submission_id);
+              }}
+            >
+              <span class="pulse" aria-hidden="true"></span>
+              <span class="sr-only">
+                {open ? "Hide" : "Show"} finished tasks for {row.team}
+              </span>
+            </button>
+          </td>
           <td class="px-2 py-2">
             {row.team}
             <span class="note">running</span>
@@ -248,10 +278,15 @@
                columns, which have no value yet, but leaving this empty made a
                running submission look undated. -->
           <td class="px-2 py-2">{clockTime(row.created_at)}</td>
-          <!-- The chevron column. A running row has no task detail to open, but
-               the cell has to exist or the header and the body disagree. -->
-          <td></td>
+          <td class="chevron" aria-hidden="true">{open ? "▾" : "▸"}</td>
         </tr>
+        {#if open}
+          <tr class="detail-row">
+            <td colspan={columns.length + 2} id="tasks-{row.submission_id}">
+              {@render taskTable(row)}
+            </td>
+          </tr>
+        {/if}
       {/each}
       {#if !rows.length && !pending.length}
         <!-- The header row is the point: an empty board still has to show what

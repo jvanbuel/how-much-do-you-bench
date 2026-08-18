@@ -242,6 +242,33 @@ def run_rollout(job: dict, slug: str, attempt: int) -> dict:
             # even when the rollout blew up.
             with contextlib.suppress(Exception):
                 delete_key(key["key"])
+            sweep_containers(slug)
+
+
+def sweep_containers(slug: str) -> None:
+    """Tear down the rollout's own containers, whatever Harbor left behind.
+
+    Every task image ends in `sleep infinity` so the container survives the
+    agent's commands, which means a container Harbor does not remove does not
+    exit either -- it runs until the host does. Measured on the graded fleet:
+    twenty-two rollout containers alive against twelve rollouts in flight, some
+    two hours old, each holding the memory its task asked for.
+
+    Harbor names the compose project after the trial, lower-cased, plus `__env`.
+    Naming it exactly is what makes this safe: a replica sharing the host is
+    running its own rollout, and a broader sweep would kill it.
+    """
+    trial = trial_dir(RUNS_DIR / slug)
+    if trial is None:
+        return
+    project = f"{trial.name.lower()}__env"
+    with contextlib.suppress(Exception):
+        subprocess.run(
+            ["docker", "compose", "-p", project, "down", "-v", "--remove-orphans"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
 
 
 def rejected_config(config: Path | None, proc: subprocess.CompletedProcess, result: dict) -> bool:
