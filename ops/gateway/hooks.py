@@ -15,9 +15,44 @@ Tools win over reasoning, because a data engineering agent that cannot run a
 command is useless while one that cannot think out loud is merely worse.
 """
 
+import re
 from typing import Any
 
 from litellm.integrations.custom_logger import CustomLogger
+
+# Measured against the deployed model, by binary search on a captured Claude Code
+# request: 18 tools succeed, 19 return "Task submission failed ... Generation
+# failed" with no mention of tools. Claude Code sends 28, so it fails on its
+# first call, every time.
+MAX_TOOLS = 18
+
+# What a coding agent actually needs, and what merely travels with it. Claude
+# Code's 28 include CronCreate, six Task* tools, EnterWorktree, DesignSync,
+# SendMessage and a 21KB Workflow schema -- none of which mean anything inside a
+# task container. Ordered by how much a rollout would miss them.
+KEEP = re.compile(
+    r"^(bash|shell|exec|run|read|view|cat|edit|str_replace|apply_patch|patch|write|create"
+    r"|glob|grep|search|find|ls|list_files|notebook|todo|think|update_plan)",
+    re.I,
+)
+
+
+def _essential_first(tools: list) -> list:
+    """The tools worth keeping when the model will not take them all.
+
+    Truncating the list as sent is not enough: Claude Code's order is
+    alphabetical, so the last ten are TaskCreate onwards -- but Write is 28th,
+    and Write is the one to keep. Selection is by name, not position.
+    """
+    def name(tool: Any) -> str:
+        if not isinstance(tool, dict):
+            return ""
+        fn = tool.get("function")
+        return str((fn or {}).get("name") if isinstance(fn, dict) else tool.get("name") or "")
+
+    wanted = [t for t in tools if KEEP.match(name(t))]
+    rest = [t for t in tools if t not in wanted]
+    return (wanted + rest)[:MAX_TOOLS]
 
 
 class ToolsBeatReasoning(CustomLogger):
@@ -37,9 +72,14 @@ class ToolsBeatReasoning(CustomLogger):
         # parameter caused it.
         kwargs["parallel_tool_calls"] = False
 
-        # Bedrock rejects strict tool schemas, and caps how many a request may
-        # carry. A harness with a large toolset trips this and gets the same
-        # unhelpful "Generation failed" as everything else.
+        # Bedrock caps how many tools a request may carry, and answers a
+        # request over the cap with the same unhelpful "Generation failed" as
+        # everything else. Trim rather than fail: a harness with 28 tools works
+        # with the 18 that matter, and one with fewer is untouched.
+        if len(kwargs["tools"]) > MAX_TOOLS:
+            kwargs["tools"] = _essential_first(kwargs["tools"])
+
+        # Bedrock also rejects strict tool schemas.
         for tool in kwargs["tools"]:
             if isinstance(tool, dict):
                 tool.pop("strict", None)
