@@ -33,6 +33,11 @@ resource "aws_ecs_task_definition" "gateway" {
     image     = "${aws_ecr_repository.gateway.repository_url}:latest"
     essential = true
     command   = ["--config", "/app/config.yaml", "--port", "4000"]
+    # Time to finish what it is already serving. ECS sends SIGTERM, uvicorn
+    # stops accepting connections and drains; without this it gets 30 seconds
+    # and a model call that takes longer is cut mid-stream. A rollout makes many
+    # calls, so the one that matters is the one in flight when the task stops.
+    stopTimeout = 120
     environment = [
       { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${random_password.db.result}@${aws_db_instance.litellm.endpoint}/litellm" },
       { name = "AWS_REGION", value = var.region },
@@ -62,8 +67,19 @@ resource "aws_ecs_service" "gateway" {
   name            = "gateway"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.gateway.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  # Two, so restarting the gateway is survivable. With one, rolling it cut every
+  # rollout in flight: the task stops, the harnesses' next call gets connection
+  # refused, and each of those becomes a team's zero. Restarting the gateway is
+  # exactly what an incident during the event calls for, so it has to be an
+  # operation rather than a decision.
+  desired_count = var.gateway_replicas
+  launch_type   = "FARGATE"
+
+  # Start the replacement before stopping anything, so both are registered in
+  # service discovery during the change and a client resolving the name gets a
+  # task that is serving.
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
 
   network_configuration {
     subnets          = local.subnets

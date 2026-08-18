@@ -219,6 +219,14 @@ variable "team_budget" {
   default = 5
 }
 
+# Two is the floor for a gateway that can be restarted without taking rollouts
+# with it. More only helps throughput, which Bedrock rather than the proxy
+# bounds.
+variable "gateway_replicas" {
+  type    = number
+  default = 2
+}
+
 variable "rate_limit_rpm" {
   type    = number
   default = 60

@@ -234,6 +234,16 @@ def run_rollout(job: dict, slug: str, attempt: int) -> dict:
                     print(f"!! trajectory: {exc}", file=sys.stderr, flush=True)
 
             result.update(metering(key["key"], result))
+
+            # A rollout that never reached the model is not a score. Requeued as
+            # an infrastructure error, which is what it is, rather than recorded
+            # as a team failing a task they were never given a chance at.
+            if not result.get("passed") and not result.get("requests"):
+                if upstream_failed(RUNS_DIR / slug):
+                    return {
+                        "status": "error",
+                        "error": "the gateway was unreachable during this rollout",
+                    }
             return result
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:1000]}
@@ -249,6 +259,44 @@ def run_rollout(job: dict, slug: str, attempt: int) -> dict:
             # even when the rollout blew up.
             with contextlib.suppress(Exception):
                 delete_key(key["key"])
+
+
+# What a harness prints when the gateway went away mid-rollout. Restarting the
+# gateway during the event is a thing that will happen -- an incident, a config
+# fix -- and with one replica it cut every rollout in flight, each of which was
+# then recorded as a team's zero.
+UPSTREAM_GONE = (
+    "connection refused",
+    "econnrefused",
+    "failed to establish a new connection",
+    "connection reset by peer",
+    "502 bad gateway",
+    "503 service unavailable",
+    "upstream connect error",
+)
+
+
+def upstream_failed(job_dir: Path) -> bool:
+    """Did this rollout fail because the gateway was unreachable?
+
+    Read from what the harness printed rather than inferred from the score: a
+    submission that genuinely cannot solve a task looks identical in every other
+    respect, and calling that an infrastructure failure would hand out free
+    retries for bad agents.
+    """
+    trial = trial_dir(job_dir)
+    if trial is None:
+        return False
+    for log in sorted((trial / "agent").rglob("*")):
+        if not log.is_file() or log.stat().st_size > 5_000_000:
+            continue
+        try:
+            text = log.read_text(errors="ignore").lower()
+        except OSError:
+            continue
+        if any(marker in text for marker in UPSTREAM_GONE):
+            return True
+    return False
 
 
 def sweep_containers(slug: str) -> None:
@@ -565,6 +613,20 @@ def _demo() -> None:
     for command in (with_config, without):
         assert command[command.index("-n") + 1] == "1"
         assert command[command.index("-p") + 1] == "/tasks/x"
+
+    # An unreachable gateway is an infrastructure failure, a wrong answer is not.
+    import tempfile as _tempfile
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        job = Path(tmp) / "job"
+        (job / "trial-1" / "agent").mkdir(parents=True)
+        (job / "trial-1" / "result.json").write_text("{}")
+        (job / "trial-1" / "agent" / "harness.log").write_text("it did not work out")
+        assert not upstream_failed(job)
+        (job / "trial-1" / "agent" / "harness.log").write_text(
+            "APIConnectionError: Connection refused (gateway:4000)"
+        )
+        assert upstream_failed(job)
 
     # Metering never turns a graded rollout into an infrastructure failure.
     # Pointed at a port nothing listens on rather than at the default admin URL,
