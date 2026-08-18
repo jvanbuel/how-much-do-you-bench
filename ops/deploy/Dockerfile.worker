@@ -16,8 +16,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
        > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin docker-buildx-plugin \
     && rm -rf /var/lib/apt/lists/*
+
+# Buildx, so `docker build` here uses the same builder as a laptop does. Without
+# it the legacy builder silently ignores BuildKit-only Dockerfile syntax -- a
+# heredoc wrote a zero-byte file and reported success, and the task images use
+# heredocs too.
+ENV DOCKER_BUILDKIT=1
 
 RUN pip install --no-cache-dir \
       harbor==0.20.0 \
