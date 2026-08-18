@@ -1,0 +1,23 @@
+# Every harness the event supports, with the model spelling each one needs.
+# `just ops::canary` runs all of them against the trivial task beside this
+# file; a FAIL means a broken harness/gateway/model contract, not a dumb agent.
+#
+# The spellings are load-bearing and explained in docs/harnesses.md. If a new
+# harness gets supported, or a spelling changes, this file is where the canary
+# learns about it -- keep it in step with the doc.
+agents:
+  - name: aider
+    model_name: openai/openai/gemma
+  - name: opencode
+    model_name: gemma
+  - name: codex
+    model_name: gemma
+  - name: pi
+    model_name: gateway/gemma
+  - name: claude-code
+    model_name: gemma
+  # The baseline `agent/` entrypoint, run exactly as `just eval` runs it. This
+  # is the one that exercises the GATEWAY_* env plumbing end to end.
+  - name: submission
+    import_path: harness.submission_agent:Submission
+    model_name: gemma

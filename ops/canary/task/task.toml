@@ -1,0 +1,43 @@
+schema_version = "1.3"
+artifacts = []
+
+[task]
+name = "hackathon/canary"
+description = "Write one file with one word: proves a harness can reach the model and use a tool"
+authors = []
+keywords = ["canary", "smoke-test"]
+
+[metadata]
+category = "ops"
+difficulty_explanation = """
+Deliberately trivial. This task is not part of the benchmark: it exists so
+`just ops::canary` can prove, in minutes, that every supported harness still
+reaches the model through the gateway and can execute one tool call. Any
+harness that fails this is misconfigured, not unintelligent -- which is exactly
+the class of failure the canary exists to catch. It lives under ops/ rather
+than tasks/ because terraform derives the graded task list from tasks/, and
+this must never be graded.
+"""
+
+[verifier]
+timeout_sec = 60.0
+collect = []
+
+[verifier.env]
+
+[agent]
+# Matches the suite: a passing run finishes in well under a minute, and a
+# harness that spends the full budget here is wedged, which is a finding.
+timeout_sec = 300.0
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 900.0
+os = "linux"
+cpus = 1
+memory_mb = 2048
+mcp_servers = []
+
+[environment.env]
+
+[solution.env]

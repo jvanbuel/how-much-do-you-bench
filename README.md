@@ -49,8 +49,11 @@ just submit your-team
 ```
 
 It refuses uncommitted or unpushed work and sends the full commit hash, because
-each of those fails twenty minutes later rather than immediately. Five
-submissions of the full suite; local runs are unlimited and unscored.
+each of those fails twenty minutes later rather than immediately. For the same
+reason the server checks the `agent.yaml` in your commit before accepting: a
+config grading would refuse is a rejection now, with the reason, and costs you
+nothing -- not a note on the board twenty minutes later. Five submissions of
+the full suite; local runs are unlimited and unscored.
 
 ## Operating the benchmark
 

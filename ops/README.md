@@ -11,12 +11,18 @@ Commands here are written to run from the repository root, which is where the
 ```
 just eval                # run agent/ against a sample task
 just calibrate <task>    # oracle must score 1.0, nop must score 0.0
+just ops::canary         # every supported harness against one trivial task
 just ops::api            # builds the frontend, serves it and /results on :8000
 just ops::worker         # polls SQS, runs rollouts, writes DynamoDB
 just ops::test           # scoring, results table and runner self-checks
 just ops::redrive        # put dead-lettered rollouts back on the queue
 just ops::gateway        # a local LiteLLM instead of the deployed one
 ```
+
+Run `canary` after touching the gateway config, the base image, or a harness
+spelling: every harness incident so far burned a full bench run to discover,
+and each would have shown up there in minutes. What is known about each
+harness is collected in [docs/harnesses.md](../docs/harnesses.md).
 
 `eval` and `calibrate` are the participants' own recipes; everything under
 `ops::` is this half of the repo.

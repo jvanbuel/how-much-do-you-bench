@@ -140,6 +140,56 @@ test:
     cd ops/platform && DEMO=1 uv run --quiet --with boto3 --with requests --with pyyaml python -m worker.main
     node ops/frontend/src/lib/scoring.test.mjs
 
+# Run every supported harness against one trivial task and say which failed.
+#
+# Every harness incident so far -- pi's empty provider file, aider's model
+# spelling, Claude Code's 19th tool -- burned a full bench run to discover.
+# Each would have shown up here in minutes. Run it after touching the gateway
+# config, the base image, tasks/base, or a harness spelling in
+# ops/canary/agents.yaml; a FAIL is a broken harness/gateway contract, because
+# the task itself (write one word to one file) cannot be failed on merit.
+#
+# Needs a key that reaches the gateway (a team key is fine) and local Docker,
+# like `just eval`. Exit code says whether every harness passed.
+canary:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    KEY="${GATEWAY_API_KEY:-${LITELLM_MASTER_KEY:-}}"
+    [ -n "$KEY" ] || { echo "set GATEWAY_API_KEY (a team key or the master key)"; exit 1; }
+    rm -rf jobs/canary
+    docker build -q -t hmdyb-task-base:1 tasks/base
+    GW="${GATEWAY_URL:-https://bench-llm.playground.dataminded.cloud/v1}"
+    # The same environment a graded rollout gets, in every spelling a harness
+    # reads -- see ops/platform/worker/main.py, which this mirrors.
+    export OPENAI_BASE_URL="$GW" OPENAI_API_KEY="$KEY"
+    export ANTHROPIC_BASE_URL="${GW%/v1}" ANTHROPIC_API_KEY="$KEY"
+    export GATEWAY_URL="$GW" GATEWAY_API_KEY="$KEY"
+    export CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1
+    MOUNTS='[{"type":"bind","source":"'$(pwd)'/agent","target":"/submission-src","read_only":true}]'
+    PYTHONPATH=$(pwd)/ops harbor run \
+      --config ops/canary/agents.yaml -p ops/canary/task -n 1 -o jobs --job-name canary -y \
+      --mounts "$MOUNTS" \
+      --ae SUBMISSION_LOCAL_DIR=/submission-src \
+      --ae GATEWAY_URL="$GW" --ae GATEWAY_API_KEY="$KEY" \
+      --ae OPENAI_BASE_URL="$GW" --ae OPENAI_API_KEY="$KEY" \
+      --ae ANTHROPIC_BASE_URL="${GW%/v1}" --ae ANTHROPIC_API_KEY="$KEY" \
+      --ae CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1 \
+      || true
+    python3 - <<'EOF'
+    import json, sys
+    stats = json.load(open("jobs/canary/result.json"))["stats"]
+    failed = []
+    for name, ev in sorted(stats["evals"].items()):
+        agent = name.split("__")[0]
+        ok = not ev["n_errors"] and ev["metrics"] and all(m.get("mean") == 1.0 for m in ev["metrics"])
+        print(f"{'PASS' if ok else 'FAIL'}  {agent}")
+        if not ok:
+            failed.append(agent)
+    if failed:
+        print(f"\n{len(failed)} harness(es) broken: {', '.join(failed)} -- see `just view`")
+    sys.exit(1 if failed else 0)
+    EOF
+
 # Put dead-lettered rollouts back on the queue.
 #
 # A rollout that failed five times is recorded as an error and deliberately does
