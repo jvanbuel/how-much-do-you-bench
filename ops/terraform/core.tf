@@ -10,6 +10,13 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    # ncecere's, not BerriAI's own: that one ignores a supplied `key` and keeps
+    # no copy of the one it mints, so it produces keys nobody can retrieve.
+    # Tested, both of them, against a live gateway.
+    litellm = {
+      source  = "ncecere/litellm"
+      version = "~> 2.0"
+    }
   }
 
   # Partial config: the bucket name carries the account id, so it lives in

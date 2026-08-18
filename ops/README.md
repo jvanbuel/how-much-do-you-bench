@@ -21,19 +21,6 @@ just ops::gateway        # a local LiteLLM instead of the deployed one
 `eval` and `calibrate` are the participants' own recipes; everything under
 `ops::` is this half of the repo.
 
-## Behind a TLS-intercepting proxy
-
-Not a participant concern -- they are not on a corporate network -- but this is
-where it was hit during development. The agent's call to the gateway fails with
-a bare connection error that never mentions TLS. Set `CORP_CA_FILE` in `.env`
-and `just eval` mounts the bundle into the task container. The tell:
-
-```
-docker run --rm curlimages/curl -sI https://bench-llm.playground.dataminded.cloud/v1/models
-```
-
-failing where the same request works from your shell.
-
 ## Deploying
 
 ```

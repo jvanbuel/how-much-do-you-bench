@@ -21,53 +21,9 @@ rate_limit_rpm := env_var_or_default("RATE_LIMIT_RPM", "60")
 # virtual key. The budget is the blast radius if a key leaks, and rpm keeps one
 # runaway practice loop from starving the graded queue.
 #
-# Terraform owns the values, this tells the gateway to accept them. Not a
-# terraform resource because BerriAI's provider ignores a supplied `key` and
-# keeps no copy of the one it mints; the raw API honours it and hands it back.
+# Minting and revoking are terraform's, from ops/teams.yaml. There is nothing to
+# run here.
 #
-# Reconciles rather than appends: a team dropped from teams.yaml has its key
-# deleted here, which is the half of revocation SSM cannot do on its own.
-#
-# Register every team's key with the gateway. Re-runnable.
-register-keys:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    GW=$(AWS_PROFILE={{aws_profile}} terraform -chdir=ops/terraform output -raw gateway_url)
-    GW=${GW%/v1}
-    M=$(AWS_PROFILE={{aws_profile}} aws ssm get-parameter --region {{aws_region}} \
-      --name /de-benchmark/litellm-master-key --with-decryption \
-      --query Parameter.Value --output text)
-
-    WANTED=$(mktemp)
-    AWS_PROFILE={{aws_profile}} aws ssm get-parameters-by-path --region {{aws_region}} \
-      --path /de-benchmark/team-keys --with-decryption \
-      --query 'Parameters[].[Name,Value]' --output text > "$WANTED"
-    [ -s "$WANTED" ] || { echo "no team keys in SSM: run terraform apply first"; exit 1; }
-
-    while read -r NAME KEY; do
-      TEAM="${NAME##*/}"
-      CODE=$(curl -s -o /tmp/reg.out -w '%{http_code}' -X POST "$GW/key/generate" \
-        -H "Authorization: Bearer $M" -H 'content-type: application/json' \
-        -d "{\"key\":\"$KEY\",\"key_alias\":\"team-$TEAM\",\"models\":[\"gemma\"],\"rpm_limit\":{{rate_limit_rpm}},\"max_budget\":{{team_budget}}}")
-      case "$CODE" in
-        2*) echo "$TEAM registered" ;;
-        *)  if grep -qi 'already exists\|duplicate' /tmp/reg.out; then echo "$TEAM already registered"; else
-              echo "$TEAM FAILED ($CODE): $(head -c 200 /tmp/reg.out)"; fi ;;
-      esac
-    done < "$WANTED"
-
-    # Anything the gateway still accepts that teams.yaml no longer names.
-    KNOWN=$(cut -f1 "$WANTED" | sed 's|.*/|team-|' | sort)
-    curl -s "$GW/key/list?return_full_object=true&size=200" -H "Authorization: Bearer $M" |
-      python3 -c "import json,sys; [print(k['key_alias'], k['token']) for k in (json.load(sys.stdin).get('keys') or []) if isinstance(k, dict) and (k.get('key_alias') or '').startswith('team-')]" |
-      while read -r ALIAS TOKEN; do
-        if ! echo "$KNOWN" | grep -qx "$ALIAS"; then
-          curl -s -o /dev/null -X POST "$GW/key/delete" -H "Authorization: Bearer $M" \
-            -H 'content-type: application/json' -d "{\"keys\":[\"$TOKEN\"]}"
-          echo "${ALIAS#team-} revoked: not in teams.yaml"
-        fi
-      done
-
 # Readable by anyone the AWS account trusts and nobody else, so this is also how
 # a key gets re-read when a team loses theirs -- nothing is printed once.
 #
@@ -114,9 +70,17 @@ tunnel port="4000":
 #
 # A local LiteLLM instead of the deployed one.
 gateway:
+    #!/usr/bin/env bash
+    set -euo pipefail
     docker compose --env-file .env -f ops/gateway/docker-compose.yml up -d
-    @echo "waiting for gateway..." && until curl -sf -o /dev/null http://127.0.0.1:4000/health/liveliness; do sleep 3; done
-    @echo "gateway  http://127.0.0.1:4000"
+    echo "waiting for gateway..."
+    for _ in $(seq 1 60); do
+      curl -sf -o /dev/null http://127.0.0.1:4000/health/liveliness && break
+      sleep 3
+    done
+    curl -sf -o /dev/null http://127.0.0.1:4000/health/liveliness \
+      || { echo "gateway did not come up:"; docker compose -f ops/gateway/docker-compose.yml logs gateway --tail 20; exit 1; }
+    echo "gateway  http://127.0.0.1:4000"
 
 # Build the Svelte dashboard into ops/platform/static.
 build-frontend:

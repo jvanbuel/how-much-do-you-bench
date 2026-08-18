@@ -36,19 +36,6 @@ eval task="incremental-dupes" agent_dir="agent": base
     export OPENAI_BASE_URL="$GW"
 
     MOUNTS='[{"type":"bind","source":"{{justfile_directory()}}/{{agent_dir}}","target":"/submission-src","read_only":true}'
-    CA=()
-    # Behind a TLS-intercepting proxy the agent's HTTPS call fails with a bare
-    # connection error that never mentions TLS. See ops/README.md; not something a
-    # participant should meet, but the plumbing costs nothing to leave in.
-    if [ -f "${CORP_CA_FILE:-}" ]; then
-      MOUNTS+=',{"type":"bind","source":"'"$CORP_CA_FILE"'","target":"/etc/ssl/ca.pem","read_only":true}'
-      # Python, curl and node each look at a different variable, and an agent
-      # that installs itself uses all three.
-      CA=(--ae SSL_CERT_FILE=/etc/ssl/ca.pem
-          --ae REQUESTS_CA_BUNDLE=/etc/ssl/ca.pem
-          --ae CURL_CA_BUNDLE=/etc/ssl/ca.pem
-          --ae NODE_EXTRA_CA_CERTS=/etc/ssl/ca.pem)
-    fi
 
     # harbor is a uv tool, so the repo is not on its sys.path.
     PYTHONPATH={{justfile_directory()}}/ops harbor run \
@@ -57,8 +44,8 @@ eval task="incremental-dupes" agent_dir="agent": base
       --ae SUBMISSION_LOCAL_DIR=/submission-src \
       --ae GATEWAY_URL="$GW" \
       --ae GATEWAY_API_KEY="$KEY" --ae ANTHROPIC_API_KEY="$KEY" \
-      --ae OPENAI_API_KEY="$KEY" \
-      "${CA[@]}"
+      --ae OPENAI_API_KEY="$KEY"
+
 
 # Refuses uncommitted or unpushed work and sends the full commit hash, because
 # each of those fails twenty minutes later rather than immediately.
