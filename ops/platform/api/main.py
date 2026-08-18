@@ -26,11 +26,6 @@ MAX_SUBMISSIONS = int(os.environ.get("MAX_SUBMISSIONS", "5"))
 # Where the trajectory viewer is served. Empty when it is not deployed, which
 # the dashboard reads as "render no trace links" rather than dead ones.
 VIEWER_URL = os.environ.get("VIEWER_URL", "").rstrip("/")
-# Where a submission may be fetched from. The worker clones this URL to read the
-# commit's agent.yaml, and the task container clones it again to be graded, so
-# it is not merely a label: git's `ext::` transport runs a command rather than
-# fetching a repository, and https to a known host is the whole defence.
-
 # The team name is a key prefix, a directory name on EFS and a path segment in
 # every trace URL. Constraining it here is cheaper than escaping it three times.
 TEAM = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
