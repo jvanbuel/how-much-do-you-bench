@@ -31,9 +31,9 @@
 # if you were scored on something you did not expect.
 
 agents:
-  # Benchmarked harness: opencode. One commit per harness, so each submission is
+  # Benchmarked harness: pi. One commit per harness, so each submission is
   # graded on exactly the config in the commit it names.
-  - name: opencode
+  - name: pi
     model_name: openai/gemma
     skills: []
     mcp_servers: []
