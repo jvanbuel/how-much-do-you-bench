@@ -38,3 +38,29 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | b
     && uv python install 3.12 \
     && uv tool install aider-chat \
     && uv cache prune --ci || true
+
+# pi cannot be pointed at an OpenAI-compatible endpoint by environment variable.
+# Tested: with OPENAI_BASE_URL set it still authenticates against api.openai.com
+# and returns 401, and its only base-URL variable is Azure's. A custom provider
+# in models.json is the supported way, so the gateway is one -- `apiKey` names an
+# environment variable rather than holding a secret, which is why this can ship
+# in an image.
+#
+# Select it with `model_name: gateway/gemma`: harbor's pi adapter splits that
+# into `--provider gateway --model gemma`.
+#
+# Points at the deployed gateway. Running a local one (`just ops::gateway`) means
+# overriding this file, or pi will talk to the deployed gateway instead.
+RUN mkdir -p /root/.pi/agent && cat > /root/.pi/agent/models.json <<'JSON'
+{
+  "providers": {
+    "gateway": {
+      "baseUrl": "https://bench-llm.playground.dataminded.cloud/v1",
+      "api": "openai-completions",
+      "apiKey": "OPENAI_API_KEY",
+      "authHeader": true,
+      "models": [{ "id": "gemma" }]
+    }
+  }
+}
+JSON
