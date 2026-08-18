@@ -277,7 +277,10 @@ def _demo() -> None:
         # Repointing the gateway would take the meter off the model call.
         rejects({"name": "opencode", "env": {"GATEWAY_URL": "https://elsewhere"}}, "env")
         # One model for everyone is the premise of the event.
-        rejects({"name": "opencode", "model_name": "openai/gpt-5"}, "model_name must be")
+        rejects({"name": "opencode", "model_name": "openai/gpt-5"}, "model_name must end in")
+        # The spelling aider needs, which a one-prefix rule refused.
+        for good in ("gemma", "openai/gemma", "openai/openai/gemma", "gateway/gemma"):
+            _agent({"name": "opencode", "model_name": good}, root, "gemma")
         # Not importable in this process, so it would fail the rollout instead.
         rejects({"import_path": "agent.main:Mine"}, "import_path must be")
         rejects({"name": "opencode", "skills": ["../../etc"]}, "escapes the repository")
