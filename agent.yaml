@@ -33,17 +33,16 @@
 # something you did not expect.
 
 agents:
-  # The baseline: an off-the-shelf harness, installed into the task container
-  # for you. Beat it, or work out why you cannot.
-  #
-  # `openai/gemma` is provider/model, which is how opencode names things. The
-  # provider is openai because the gateway speaks that API, not because the
-  # model is.
-  - name: opencode
-    model_name: openai/gemma
+  - name: codex
+    model_name: gemma
     skills: []
     mcp_servers: []
-    kwargs: {}
+    # codex ships a built-in web_search tool, and Bedrock refuses any request
+    # carrying one: "Tool type 'web_search' is not supported". It serves
+    # function, mcp, custom, namespace and tool_search -- the hosted kinds would
+    # have to run on the provider's own infrastructure.
+    kwargs:
+      web_search: disabled
 
   # Your own harness: the `agent/` directory in this repo, run as
   # `uv run agent --instruction ...`. Uncomment to grade your code instead.
