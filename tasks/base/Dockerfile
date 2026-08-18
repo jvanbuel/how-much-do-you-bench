@@ -70,3 +70,27 @@ RUN mkdir -p /root/.pi/agent \
       '}' \
       > /root/.pi/agent/models.json \
  && python3 -c "import json;json.load(open('/root/.pi/agent/models.json'))"
+
+# codex sandboxes every command with bubblewrap, which needs unprivileged user
+# namespaces that a task container does not have. Without this it fails every
+# command with "bwrap: No permissions to create a new namespace", concludes it
+# cannot see the filesystem, and asks the user for help -- which is what a
+# whole 21-task submission of zeros turned out to be. The container is already
+# the sandbox; a second one inside it buys nothing.
+#
+# The provider block is not optional either: codex ignores OPENAI_BASE_URL
+# unless a provider declares it, and `wire_api = "chat"` was removed, so the
+# responses API is the only wire left.
+RUN mkdir -p /root/.codex \
+ && printf '%s\n' \
+      'model_provider = "gateway"' \
+      'sandbox_mode = "danger-full-access"' \
+      'approval_policy = "never"' \
+      '' \
+      '[model_providers.gateway]' \
+      'name = "gateway"' \
+      'base_url = "https://bench-llm.playground.dataminded.cloud/v1"' \
+      'env_key = "OPENAI_API_KEY"' \
+      'wire_api = "responses"' \
+      > /root/.codex/config.toml \
+ && grep -q 'danger-full-access' /root/.codex/config.toml
