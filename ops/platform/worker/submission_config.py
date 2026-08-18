@@ -168,11 +168,18 @@ def _agent(entry: dict, root: Path, model: str) -> dict:
     if import_path:
         clean["import_path"] = import_path
 
-    # One model is the point of the event. A provider prefix is allowed because
-    # that is how some harnesses name things -- opencode wants `openai/gemma`.
+    # One model is the point of the event; the prefixes in front of it are how
+    # each harness names things, and there can be more than one. Harbor's aider
+    # adapter splits the first prefix off and hands the rest to aider, which
+    # needs a prefix of its own -- so `openai/openai/gemma` is the only spelling
+    # that reaches aider correctly, and a rule of "at most one prefix" made
+    # aider ungradeable while looking like a scoring result.
     model_name = entry.get("model_name") or model
-    if not re.fullmatch(rf"([a-z0-9_.-]+/)?{re.escape(model)}", str(model_name)):
-        raise ConfigError(f"model_name must be {model} or <provider>/{model}, not {model_name}")
+    if not re.fullmatch(rf"([a-z0-9_.-]+/)*{re.escape(model)}", str(model_name)):
+        raise ConfigError(
+            f"model_name must end in {model}, optionally behind provider "
+            f"prefixes, not {model_name}"
+        )
     clean["model_name"] = model_name
 
     skills = entry.get("skills") or []
