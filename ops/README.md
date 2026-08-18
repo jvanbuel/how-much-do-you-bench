@@ -269,17 +269,26 @@ Constraints worth knowing before you author tasks or a harness:
 ## Before the event
 
 ```
-just ops::master-key         # once, after the first apply
-just ops::register-keys      # tell the gateway to accept the teams' keys
-just ops::team-keys          # print them, to hand out at kickoff
+just ops::master-key         # once, BEFORE the first apply: the provider needs it
+just ops::team-keys          # print the teams' keys, to hand out at kickoff
 ```
 
-Teams are `ops/teams.yaml`, and terraform mints one key each into SSM as a
-SecureString under `/de-benchmark/team-keys/`. That is the only place they live:
-nothing is printed once and lost, and reading one needs AWS credentials for this
-account. `register-keys` then tells LiteLLM to accept those exact values --
-terraform cannot, because the admin API is unreachable from outside the VPC on
-purpose, so it runs on a worker through SSM.
+Teams are `ops/teams.yaml`. Terraform generates a key per name, registers it
+with the gateway through the `BerriAI/litellm` provider, and writes it to SSM as
+a SecureString under `/de-benchmark/team-keys/` -- write-only, so the value is in
+the parameter and at the gateway but never in terraform state. Reading one needs
+AWS credentials for this account, and nothing is printed once and lost.
+
+Adding a team is a name and an apply. Removing one is the same in reverse, and
+that is the whole of revocation: the key is deleted at the gateway, not merely
+forgotten in SSM.
+
+This is why the gateway's admin routes are on the load balancer at all --
+terraform runs where an operator runs. They are master-key authenticated and
+gated on `admin_cidrs`, which defaults to `dashboard_cidrs`; narrow both to the
+venue before the event. The master key can mint and delete every team's key and
+rewrite the model config, so an open `admin_cidrs` is an internet-facing admin
+plane whose only lock is one bearer token.
 
 The same key is the team's identity at submit time. `/submit` takes it as a
 bearer token and derives the team from it, so a team name is no longer a claim

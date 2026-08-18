@@ -10,6 +10,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    litellm = {
+      source  = "BerriAI/litellm"
+      version = "~> 0.4"
+    }
   }
 
   # Partial config: the bucket name carries the account id, so it lives in
@@ -199,6 +203,13 @@ variable "worker_replicas" {
   default = 12
 }
 
+# The blast radius if a team's key leaks, in dollars. A whole event of rollouts
+# is single digits, so this is generous and still bounded.
+variable "team_budget" {
+  type    = number
+  default = 5
+}
+
 variable "rate_limit_rpm" {
   type    = number
   default = 60
@@ -223,6 +234,8 @@ variable "task_ids" {
 }
 
 locals {
+  admin_cidrs = coalesce(var.admin_cidrs, var.dashboard_cidrs)
+
   task_files = {
     for f in fileset("${path.module}/../../tasks", "*/task.toml") :
     dirname(f) => file("${path.module}/../../tasks/${f}")
@@ -270,6 +283,14 @@ output "task_budgets" {
 variable "max_submissions" {
   type    = number
   default = 5
+}
+
+# Who may reach the gateway's admin API. Defaults to whoever may reach the
+# dashboard, because both answer the same question -- where do we operate from --
+# and one knob is easier to narrow than two that must agree.
+variable "admin_cidrs" {
+  type    = list(string)
+  default = null
 }
 
 variable "dashboard_cidrs" {

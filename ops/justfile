@@ -39,66 +39,13 @@ master-key:
     echo "done. existing virtual keys are invalidated; re-run just team-keys."
 
 # A team key can call /v1 and nothing else: LiteLLM refuses admin routes for a
-# virtual key, and the listener only forwards /v1 anyway. The budget is the
-# blast radius if a key leaks, and rpm keeps one runaway practice loop from
-# starving the graded queue.
+# virtual key, and the listener only forwards /v1 and the admin routes terraform
+# needs. The budget is the blast radius if a key leaks, and rpm keeps one runaway
+# practice loop from starving the graded queue.
 #
-# The values are terraform's, from ops/teams.yaml, and already in SSM. This only
-# tells the gateway to accept them -- /key/generate takes a caller-supplied key,
-# and it runs on the worker because the admin API is deliberately unreachable
-# from outside, including for us. Re-runnable: a key that already exists is
-# reported as such and left alone.
+# Minting is terraform's: the keys come from ops/teams.yaml, and applying is how
+# a team is added or revoked. There is nothing to run here.
 #
-# Run after `terraform apply`, and after any `just ops::master-key` -- that
-# rotates the master key and invalidates every virtual key with it.
-#
-# Register every team's key with the gateway.
-register-keys:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    IID=$(AWS_PROFILE={{aws_profile}} aws ec2 describe-instances --region {{aws_region}} \
-      --filters "Name=tag:aws:autoscaling:groupName,Values=de-benchmark-worker" \
-                "Name=instance-state-name,Values=running" \
-      --query 'Reservations[0].Instances[0].InstanceId' --output text)
-    [ "$IID" != "None" ] || { echo "no running worker to register through: bring the fleet up first"; exit 1; }
-
-    SCRIPT=$(cat <<'SH' | base64
-    set -eu
-    R="${AWS_REGION:-eu-central-1}"
-    M=$(aws ssm get-parameter --name /de-benchmark/litellm-master-key --with-decryption \
-      --region "$R" --query Parameter.Value --output text)
-    # Paginated: the whole set in one call, decrypted, names and values together.
-    aws ssm get-parameters-by-path --path /de-benchmark/team-keys --with-decryption \
-      --region "$R" --query 'Parameters[].[Name,Value]' --output text |
-    while read -r NAME KEY; do
-      TEAM="${NAME##*/}"
-      CODE=$(curl -s -o /tmp/out -w '%{http_code}' -X POST \
-        http://gateway.de-benchmark.internal:4000/key/generate \
-        -H "Authorization: Bearer $M" -H 'content-type: application/json' \
-        -d "{\"key\":\"$KEY\",\"key_alias\":\"team-$TEAM\",\"models\":[\"gemma\"],\"rpm_limit\":RPM,\"max_budget\":BUDGET}")
-      case "$CODE" in
-        2*) echo "$TEAM registered" ;;
-        *)  grep -qi 'already exists\|duplicate' /tmp/out \
-              && echo "$TEAM already registered" \
-              || echo "$TEAM FAILED ($CODE): $(head -c 200 /tmp/out)" ;;
-      esac
-    done
-    SH
-    )
-    SCRIPT=$(echo "$SCRIPT" | base64 -d | sed -e 's/RPM/{{rate_limit_rpm}}/' -e 's/BUDGET/{{team_budget}}/' | base64)
-    CMD=$(AWS_PROFILE={{aws_profile}} aws ssm send-command --region {{aws_region}} \
-      --instance-ids "$IID" --document-name AWS-RunShellScript \
-      --parameters "commands=[\"echo $SCRIPT | base64 -d | sh\"]" \
-      --query 'Command.CommandId' --output text)
-    for _ in $(seq 1 20); do
-      sleep 3
-      STATE=$(AWS_PROFILE={{aws_profile}} aws ssm get-command-invocation --region {{aws_region}} \
-        --command-id "$CMD" --instance-id "$IID" --query Status --output text 2>/dev/null || echo Pending)
-      [ "$STATE" = "InProgress" ] || [ "$STATE" = "Pending" ] || break
-    done
-    AWS_PROFILE={{aws_profile}} aws ssm get-command-invocation --region {{aws_region}} \
-      --command-id "$CMD" --instance-id "$IID" --query StandardOutputContent --output text
-
 # Readable by anyone the AWS account trusts and nobody else, so this is also how
 # a key gets re-read when a team loses theirs -- nothing is printed once.
 #
