@@ -1,56 +1,27 @@
-# Team keys, minted by the gateway and owned by terraform.
+# Team keys: the values, and where they are kept. Telling the gateway to accept
+# them is `just ops::register-keys`, which is a curl against the admin route
+# rather than a resource here.
 #
-# The list is ops/teams.yaml. Adding a name and applying mints that team a key;
-# removing one deletes the key at the gateway and the copy in SSM, which is the
-# whole of revocation -- the previous shape left a removed team still able to
-# reach the model until the master key was rotated.
+# It was a resource, using BerriAI's own terraform provider, until that was
+# tested against a live gateway: litellm_key ignores the `key` argument and
+# mints its own value, and then does not record that value in state either --
+# `key` reads null, and the only trace left is the hash LiteLLM stores. A key
+# nobody can retrieve is not a key. The raw API does honour a supplied `key` and
+# returns it, which is what the recipe uses.
 #
-# This is why the gateway's admin routes are reachable at all: terraform runs
-# where an operator runs, not inside the VPC. See gateway_public.tf, and narrow
-# admin_cidrs before the event.
+# The gateway's admin route is public for that recipe's sake. See
+# gateway_public.tf, and narrow admin_cidrs before the event.
 
 locals {
   # A list rather than a map so the file reads as what it is: the teams.
   teams = toset(yamldecode(file("${path.module}/../teams.yaml")).teams)
 }
 
-provider "litellm" {
-  api_base = "https://${local.gateway_fqdn}"
-  # The value terraform generated, not a read-back of it: nothing has to exist
-  # before the first apply, and there is no ordering to get wrong.
-  api_key = "sk-${random_password.litellm_master.result}"
-}
-
-# Generated here rather than by the gateway, because `key` is a settable
-# argument: a value known at plan time is one the SSM parameter can carry
-# without terraform having to apply the gateway first, and the two cannot
-# disagree about what a team's key is.
 resource "random_password" "team_key" {
   for_each = local.teams
 
   length  = 40
   special = false
-}
-
-resource "litellm_key" "team" {
-  for_each = local.teams
-
-  key        = "sk-${random_password.team_key[each.key].result}"
-  key_alias  = "team-${each.key}"
-  models     = ["gemma"]
-  rpm_limit  = var.rate_limit_rpm
-  max_budget = var.team_budget
-
-  # The route this provider talks to does not exist until that rule does, and
-  # the gateway has to be running the master key it is being authenticated with.
-  depends_on = [aws_lb_listener_rule.gateway_admin, aws_ecs_service.gateway]
-
-  lifecycle {
-    # A virtual key is derived from the master key, so rotating the master
-    # invalidates every one of these. Recreating them is the honest response;
-    # leaving them in state would be terraform reporting keys that no longer work.
-    replace_triggered_by = [random_password.litellm_master]
-  }
 }
 
 # Where a human, and the API, read a team's key. SecureString, so reading one is
@@ -61,15 +32,11 @@ resource "aws_ssm_parameter" "team_key" {
   name = "/${local.name}/team-keys/${each.key}"
   type = "SecureString"
 
-  # Write-only: the value goes to SSM and not into terraform state. It is the
-  # same string the gateway was told to accept, so the parameter and the key
-  # cannot drift. Bump the version to push a rotation -- terraform cannot read
-  # the current value back to compare it.
+  # Write-only: the value goes to SSM and not into terraform state. Bump the
+  # version to push a rotation -- terraform cannot read the current value back
+  # to compare it.
   value_wo         = "sk-${random_password.team_key[each.key].result}"
   value_wo_version = 1
-
-  # The key has to exist at the gateway before it is handed to anyone.
-  depends_on = [litellm_key.team]
 
   tags = { team = each.key }
 }

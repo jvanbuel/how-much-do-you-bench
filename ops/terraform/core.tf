@@ -10,10 +10,6 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
-    litellm = {
-      source  = "BerriAI/litellm"
-      version = "~> 0.4"
-    }
   }
 
   # Partial config: the bucket name carries the account id, so it lives in
