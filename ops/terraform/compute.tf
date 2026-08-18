@@ -80,16 +80,23 @@ resource "aws_ecr_repository" "gateway" {
 # blocks public access, is encrypted and is versioned. Anyone who can read it
 # could read the parameter directly anyway.
 #
-# Set it with `just master-key`. Bedrock needs no secret at all: the gateway
-# signs as its task role.
+# Generated here rather than set out of band: it was the one secret a human had
+# to create before anything worked, and the terraform that mints team keys needs
+# it too. Bedrock needs no secret at all -- the gateway signs as its task role.
+#
+# Rotating it is `terraform taint random_password.litellm_master` and an apply.
+# Every virtual key is derived from it, so every team key is recreated with it;
+# `replace_triggered_by` on those keys says so, and the fingerprint below rolls
+# the services that hold the old value in memory.
+resource "random_password" "litellm_master" {
+  length  = 40
+  special = false
+}
+
 resource "aws_ssm_parameter" "litellm_master_key" {
   name  = "/${local.name}/litellm-master-key"
   type  = "SecureString"
-  value = "placeholder-set-out-of-band"
-
-  lifecycle {
-    ignore_changes = [value]
-  }
+  value = "sk-${random_password.litellm_master.result}"
 }
 
 # --------------------------------------------------------------------- roles
@@ -312,8 +319,11 @@ resource "aws_lb_target_group" "api" {
   target_type = "ip"
   vpc_id      = data.aws_vpc.default.id
 
+  # /health, not /results: /results scans DynamoDB, so health checking it meant
+  # a full table scan every thirty seconds per target and a throttled scan would
+  # have taken the dashboard out for being unhealthy.
   health_check {
-    path    = "/results"
+    path    = "/health"
     matcher = "200"
   }
 }

@@ -148,9 +148,18 @@ class Submission(BaseInstalledAgent):
         # while the verifier read the untouched stub in /app and scored zero.
         # Doing it here rather than in the baseline agent covers every harness,
         # since opencode, claude-code and the rest all act on their cwd.
+        #
+        # pipefail because the exit status of a pipeline is `tee`'s, and tee
+        # succeeds whatever the agent did: without it a harness that died on its
+        # first turn looked like a clean run, and the reason for a zero had to be
+        # dug out of the log rather than read off the result.
         await self.exec_as_agent(
             environment,
             command=(
+                "set -o pipefail; "
+                # tee opens this before the agent runs, and nothing else has
+                # created it yet on a task whose image ships no /logs/agent.
+                "mkdir -p /logs/agent; "
                 "cd /app && "
                 f"uv run --project {self._project_dir()} "
                 f"agent --instruction {shlex.quote(instruction)} "

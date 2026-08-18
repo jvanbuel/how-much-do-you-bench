@@ -11,7 +11,7 @@ just submit your-team
 That is the only supported way in. It refuses to submit uncommitted or
 unpushed work, and sends the full commit hash -- an abbreviated one cannot be
 fetched from GitHub, so a hand-written request fails on checkout rather than
-being graded. `make status` prints the board.
+being graded. The dashboard shows the board, and updates itself while you watch.
 
 ## Choosing a harness
 
@@ -38,6 +38,24 @@ command. That is the cheapest way to check whether your context engineering
 actually beats an off-the-shelf harness, rather than assuming it does.
 
 `just show-config` prints what the file resolves to without running anything.
+
+### What the graded run honours
+
+The workers read this file out of the commit you submit, so `just eval` and the
+board run the same harness. A scored run is not your laptop, though:
+
+| | |
+|---|---|
+| `agents:` | **Only the first entry is graded.** Two agents would be two results competing for one row. Put the one you mean on top before you submit. |
+| Per agent | `name`, `import_path`, `model_name`, `skills`, `mcp_servers`, `kwargs`. |
+| Not yours | `mounts`, `env`, the task, the repeat count, the output directory. A config that sets one is refused rather than obeyed. |
+| `skills:` | Resolved inside your commit, so commit the directory. A git source (`org/repo@ref`) is fetched as it is locally. |
+| `model_name` | `gemma`, or `<provider>/gemma`. One model for everyone is the premise. |
+| `import_path` | Only the runner's submission adapter, which is what runs your `agent/` entrypoint. Your own module is not importable by the runner. |
+
+A config the runner cannot grade does not fail your submission: it falls back to
+running your `agent/` entrypoint and says why in the task detail on the board.
+If you were graded on something you did not expect, that is where it says so.
 
 ### What skills and MCP mean for each harness
 
@@ -104,7 +122,7 @@ From the repo root:
 
 ```
 just eval                       # one task, against your working tree
-just eval fanout-join           # a specific task
+just eval polars-vectorise      # a specific task
 just view                       # what your agent actually did
 ```
 

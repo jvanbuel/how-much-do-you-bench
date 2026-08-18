@@ -17,70 +17,59 @@ rate_limit_rpm := env_var_or_default("RATE_LIMIT_RPM", "60")
 # as its master key and the first team-keys call fails with no hint why. Run
 # this once after the first apply.
 #
-# The value goes to SSM for the deployed gateway and to .env for the local one;
-# the two must match or a key minted against one is rejected by the other.
+# Two passes, because the gateway is both a thing terraform manages and the
+# thing terraform talks to.
 #
-# Generate the gateway's master key. Prints nothing.
-master-key:
+# The litellm provider is configured at plan time, so its key cannot come from a
+# value terraform generates during apply -- an empty api_key makes the provider
+# error, which drops every resource it owns and everything depending on one out
+# of the plan without saying so. It reads LITELLM_API_KEY instead.
+#
+# The first pass settles the gateway: the master key, the task definition
+# carrying its fingerprint, and the service rolling onto it. Only then is the
+# value in SSM the value the running gateway will accept, which is what the
+# second pass authenticates with to mint the team keys.
+#
+# Apply. Use this rather than terraform directly.
+apply +ARGS="-var-file=event.tfvars":
     #!/usr/bin/env bash
     set -euo pipefail
-    KEY="sk-$(openssl rand -hex 20)"
-    AWS_PROFILE={{aws_profile}} aws ssm put-parameter --region {{aws_region}} \
-      --name /de-benchmark/litellm-master-key --type SecureString \
-      --value "$KEY" --overwrite >/dev/null
-    touch .env
-    grep -v '^LITELLM_MASTER_KEY=' .env > .env.tmp || true
-    printf 'LITELLM_MASTER_KEY=%s\n' "$KEY" >> .env.tmp
-    mv .env.tmp .env
-    echo "master key written to SSM and .env"
-    echo "rolling the gateway so it picks it up..."
-    AWS_PROFILE={{aws_profile}} aws ecs update-service --region {{aws_region}} \
-      --cluster de-benchmark --service gateway --force-new-deployment >/dev/null
-    echo "done. existing virtual keys are invalidated; re-run just team-keys."
+    export AWS_PROFILE={{aws_profile}}
+    terraform -chdir=ops/terraform apply {{ARGS}} -target=aws_ecs_service.gateway
+    echo "waiting for the gateway to be running the current master key..."
+    aws ecs wait services-stable --region {{aws_region}} \
+      --cluster de-benchmark --services gateway
+    LITELLM_API_KEY=$(aws ssm get-parameter --region {{aws_region}} \
+      --name /de-benchmark/litellm-master-key --with-decryption \
+      --query Parameter.Value --output text)
+    export LITELLM_API_KEY
+    terraform -chdir=ops/terraform apply {{ARGS}}
 
 # A team key can call /v1 and nothing else: LiteLLM refuses admin routes for a
-# virtual key, and the listener only forwards /v1 anyway. The budget is the
-# blast radius if a key leaks, and rpm keeps one runaway practice loop from
-# starving the graded queue.
+# virtual key. The budget is the blast radius if a key leaks, and rpm keeps one
+# runaway practice loop from starving the graded queue.
 #
-# Minting runs on the worker, because /key/generate is deliberately unreachable
-# from outside -- including for us.
+# Minting and revoking are terraform's, from ops/teams.yaml. There is nothing to
+# run here.
 #
-# One inference key per team, printed once. Hand these out at kickoff.
-team-keys +TEAMS:
+# Readable by anyone the AWS account trusts and nobody else, so this is also how
+# a key gets re-read when a team loses theirs -- nothing is printed once.
+#
+# Print one team's key, or every team's with no argument.
+team-keys team="":
     #!/usr/bin/env bash
     set -euo pipefail
-    IID=$(AWS_PROFILE={{aws_profile}} aws ec2 describe-instances --region {{aws_region}} \
-      --filters "Name=tag:aws:autoscaling:groupName,Values=de-benchmark-worker" \
-                "Name=instance-state-name,Values=running" \
-      --query 'Reservations[0].Instances[0].InstanceId' --output text)
-    [ "$IID" != "None" ] || { echo "no running worker to mint through"; exit 1; }
-
-    SCRIPT=$(cat <<SH | base64
-    set -eu
-    M=\$(aws ssm get-parameter --name /de-benchmark/litellm-master-key --with-decryption \
-      --region {{aws_region}} --query Parameter.Value --output text)
-    for t in {{TEAMS}}; do
-      curl -fsS -X POST http://gateway.de-benchmark.internal:4000/key/generate \
-        -H "Authorization: Bearer \$M" -H 'content-type: application/json' \
-        -d "{\"key_alias\":\"team-\$t\",\"models\":[\"gemma\"],\"rpm_limit\":{{rate_limit_rpm}},\"max_budget\":{{team_budget}}}" \
-        | python3 -c "import json,sys;print('\$t', json.load(sys.stdin)['key'])"
-    done
-    SH
-    )
-    CMD=$(AWS_PROFILE={{aws_profile}} aws ssm send-command --region {{aws_region}} \
-      --instance-ids "$IID" --document-name AWS-RunShellScript \
-      --parameters "commands=[\"echo $SCRIPT | base64 -d | sh\"]" \
-      --query 'Command.CommandId' --output text)
-    for _ in $(seq 1 20); do
-      sleep 3
-      STATE=$(AWS_PROFILE={{aws_profile}} aws ssm get-command-invocation --region {{aws_region}} \
-        --command-id "$CMD" --instance-id "$IID" --query Status --output text 2>/dev/null || echo Pending)
-      [ "$STATE" = "InProgress" ] || [ "$STATE" = "Pending" ] || break
-    done
     echo "gateway: $(AWS_PROFILE={{aws_profile}} terraform -chdir=ops/terraform output -raw gateway_url)"
-    AWS_PROFILE={{aws_profile}} aws ssm get-command-invocation --region {{aws_region}} \
-      --command-id "$CMD" --instance-id "$IID" --query StandardOutputContent --output text
+    if [ -n "{{team}}" ]; then
+      AWS_PROFILE={{aws_profile}} aws ssm get-parameter --region {{aws_region}} \
+        --name "/de-benchmark/team-keys/{{team}}" --with-decryption \
+        --query Parameter.Value --output text
+    else
+      AWS_PROFILE={{aws_profile}} aws ssm get-parameters-by-path --region {{aws_region}} \
+        --path /de-benchmark/team-keys --with-decryption \
+        --query 'Parameters[].[Name,Value]' --output text |
+      while read -r NAME KEY; do printf '%-20s %s\n' "${NAME##*/}" "$KEY"; done
+    fi
 
 # Forward the deployed gateway to localhost, through the worker instance.
 #
@@ -109,9 +98,17 @@ tunnel port="4000":
 #
 # A local LiteLLM instead of the deployed one.
 gateway:
+    #!/usr/bin/env bash
+    set -euo pipefail
     docker compose --env-file .env -f ops/gateway/docker-compose.yml up -d
-    @echo "waiting for gateway..." && until curl -sf -o /dev/null http://127.0.0.1:4000/health/liveliness; do sleep 3; done
-    @echo "gateway  http://127.0.0.1:4000"
+    echo "waiting for gateway..."
+    for _ in $(seq 1 60); do
+      curl -sf -o /dev/null http://127.0.0.1:4000/health/liveliness && break
+      sleep 3
+    done
+    curl -sf -o /dev/null http://127.0.0.1:4000/health/liveliness \
+      || { echo "gateway did not come up:"; docker compose -f ops/gateway/docker-compose.yml logs gateway --tail 20; exit 1; }
+    echo "gateway  http://127.0.0.1:4000"
 
 # Build the Svelte dashboard into ops/platform/static.
 build-frontend:
@@ -130,10 +127,32 @@ api: build-frontend
 worker:
     cd ops/platform && uv run --with boto3 --with requests python -m worker.main
 
-# Self-checks for the ranking rules and the dashboard helpers.
+# Self-checks for the ranking rules, the results table and the runner.
+#
+# No AWS: everything with logic in it is exercised against local values, which
+# is the only reason these are worth running before a deploy rather than after.
 test:
     PYTHONPATH=ops/platform python3 ops/platform/common/scoring.py
+    cd ops/platform && uv run --quiet --with boto3 python -m common.results
+    cd ops/platform && uv run --quiet --with boto3 --with requests --with pyyaml python -m worker.submission_config
+    cd ops/platform && DEMO=1 uv run --quiet --with boto3 --with requests --with pyyaml python -m worker.main
     node ops/frontend/src/lib/scoring.test.mjs
+
+# Put dead-lettered rollouts back on the queue.
+#
+# A rollout that failed five times is recorded as an error and deliberately does
+# not count as a completed task, so the submission waits rather than being
+# ranked on a task nobody ran. This is how it stops waiting: fix the cause, then
+# move the messages back. Safe to run twice -- a rollout that has since
+# succeeded overwrites its own row again.
+redrive:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ACCOUNT=$(AWS_PROFILE={{aws_profile}} aws sts get-caller-identity --query Account --output text)
+    MAIN="arn:aws:sqs:{{aws_region}}:$ACCOUNT:de-benchmark-rollouts"
+    AWS_PROFILE={{aws_profile}} aws sqs start-message-move-task --region {{aws_region}} \
+      --source-arn "$MAIN-dlq" --destination-arn "$MAIN" >/dev/null
+    echo "dead-lettered rollouts moving back onto the queue"
 
 # --- deployment -------------------------------------------------------------
 

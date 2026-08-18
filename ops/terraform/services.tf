@@ -37,6 +37,11 @@ resource "aws_ecs_task_definition" "gateway" {
       { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${random_password.db.result}@${aws_db_instance.litellm.endpoint}/litellm" },
       { name = "AWS_REGION", value = var.region },
       { name = "AWS_DEFAULT_REGION", value = var.region },
+      # Not read by anything. Its only job is to change when the master key
+      # changes, so the task definition changes, so the service rolls and the
+      # container re-reads SSM. A rotated parameter restarts nothing by itself,
+      # and a container holding the old value fails every mint with a 401.
+      { name = "MASTER_KEY_FINGERPRINT", value = substr(sha256(aws_ssm_parameter.litellm_master_key.value), 0, 12) },
     ]
     secrets = [
       { name = "LITELLM_MASTER_KEY", valueFrom = aws_ssm_parameter.litellm_master_key.arn },
@@ -120,6 +125,9 @@ resource "aws_ecs_task_definition" "api" {
       { name = "BENCHMARK_REGION", value = var.region },
       { name = "TASKS", value = local.task_ids },
       { name = "MAX_SUBMISSIONS", value = tostring(var.max_submissions) },
+      # Where the team keys live. Passed whole rather than rebuilt from a prefix
+      # in two places, which is how the API ended up reading a path nothing set.
+      { name = "TEAM_KEY_PATH", value = "/${local.name}/team-keys" },
       { name = "VIEWER_URL", value = var.viewer_replicas > 0 ? "https://${local.traces_fqdn}" : "" },
     ]
     # Read-only: the API surfaces job directories, the worker writes them.
@@ -178,12 +186,16 @@ resource "aws_ecs_task_definition" "worker" {
   # sees it: with the honest-looking 256/512 here, twelve replicas fit one host
   # on paper, managed scaling took the fleet from four instances to one, and all
   # twelve landed together -- 24 vCPU and 48GiB of rollouts asked of 8 and 16.
-  # Matching task.toml's cpus/memory_mb makes placement and scaling agree with
-  # what actually runs: three replicas per c7g.2xlarge, four hosts for twelve.
-  cpu                      = 2048
-  memory                   = 4608
-  execution_role_arn       = aws_iam_role.execution.arn
-  task_role_arn            = aws_iam_role.worker_task.arn
+  #
+  # The worst task in the suite, not the common one, and read from task.toml
+  # rather than restated: three tasks ask for 6144MiB while this said 4608, and
+  # a replica that draws a 6GiB task on a host packed for 4GiB ones is an OOM
+  # kill that reads as "no trial result produced" and retries five times.
+  # +512MiB for this container's own process beside the rollout it starts.
+  cpu                = local.task_cpus * 1024
+  memory             = local.task_memory_mb + 512
+  execution_role_arn = aws_iam_role.execution.arn
+  task_role_arn      = aws_iam_role.worker_task.arn
 
   volume {
     name      = "docker-socket"
@@ -211,6 +223,11 @@ resource "aws_ecs_task_definition" "worker" {
       { name = "GATEWAY_URL", value = local.gateway_url },
       { name = "GATEWAY_ADMIN_URL", value = local.admin_url },
       { name = "RATE_LIMIT_RPM", value = tostring(var.rate_limit_rpm) },
+      # Not read by anything. Its only job is to change when the master key
+      # changes, so the task definition changes, so the service rolls and the
+      # container re-reads SSM. A rotated parameter restarts nothing by itself,
+      # and a container holding the old value fails every mint with a 401.
+      { name = "MASTER_KEY_FINGERPRINT", value = substr(sha256(aws_ssm_parameter.litellm_master_key.value), 0, 12) },
     ]
     secrets = [
       { name = "LITELLM_MASTER_KEY", valueFrom = aws_ssm_parameter.litellm_master_key.arn },

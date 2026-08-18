@@ -10,6 +10,25 @@
 # `agents` is a list. Adding a second entry runs both against the same task in
 # the same command, which is the cheapest way to find out whether your careful
 # context engineering actually beats an off-the-shelf harness.
+#
+# ---------------------------------------------------------------------------
+# What a graded run does with this file
+#
+# The workers read it out of the commit you submit, so the harness you eval
+# locally is the harness you are scored on. Three differences, all of them
+# because a scored run is not your laptop:
+#
+#   * Only the FIRST entry under `agents:` is graded. Two agents in one scored
+#     run would be two results competing for one row on the board. List several
+#     while you are comparing; put the one you mean on top before you submit.
+#   * Per-agent `name`, `import_path`, `model_name`, `skills`, `mcp_servers` and
+#     `kwargs` are honoured. Anything else -- `mounts`, `env`, a task path -- is
+#     the runner's, and a config that sets one is refused rather than obeyed.
+#   * `skills:` paths are resolved inside your commit, so commit the directory.
+#
+# A config the runner cannot grade does not fail your submission: it falls back
+# to running your own `agent/` entrypoint and says why on the board. Check there
+# if you were scored on something you did not expect.
 
 agents:
   # The baseline: an off-the-shelf harness, installed into the task container

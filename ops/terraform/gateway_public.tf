@@ -53,6 +53,49 @@ resource "aws_lb_listener_rule" "gateway_inference" {
   }
 }
 
+# The admin API, reachable so terraform can manage keys directly rather than
+# through an SSM tunnel. It is protected by the master key -- LiteLLM refuses
+# these routes without it -- but that key is a single bearer token that can mint
+# and delete every team's key, rewrite the model config and read all spend, and
+# copies of it sit in SSM, in .env files and in terraform state. So it is also
+# gated on source address: narrow admin_cidrs before the event and this stops
+# being an internet-facing admin plane.
+#
+# Still an allow-list. These are the routes the litellm provider uses; a route a
+# future release adds is refused by the rule below until someone decides
+# otherwise.
+resource "aws_lb_listener_rule" "gateway_admin" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 29
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.gateway.arn
+  }
+
+  condition {
+    host_header {
+      values = [local.gateway_fqdn]
+    }
+  }
+
+  condition {
+    path_pattern {
+      # Only what terraform manages, which is keys. An ALB rule allows five
+      # condition values in total across every condition, and the host header
+      # and the source range are two of them -- so this cannot become a list of
+      # every admin route anyway. Add a route here when something manages one.
+      values = ["/key/*"]
+    }
+  }
+
+  condition {
+    source_ip {
+      values = local.admin_cidrs
+    }
+  }
+}
+
 resource "aws_lb_listener_rule" "gateway_deny_rest" {
   listener_arn = aws_lb_listener.https.arn
   priority     = 31

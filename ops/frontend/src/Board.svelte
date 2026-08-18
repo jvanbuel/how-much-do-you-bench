@@ -1,5 +1,5 @@
 <script>
-  import { sortRows } from "./lib/scoring.js";
+  import { clockTime, sortRows } from "./lib/scoring.js";
 
   /** One sortable table. Two boards said the same thing twice; sorting is the
    * affordance people already expect from a leaderboard.
@@ -25,8 +25,10 @@
    * resolves to. `#` marks a repeat of the same task and would be read as a URL
    * fragment, so it becomes a dash on both sides. */
   // A column that is blank on every row is furniture. It appears only when a
-  // rollout actually recorded an error.
-  const hasDetail = (tasks) => tasks.some((t) => t.error);
+  // rollout actually recorded an error, or a note about how it was run -- an
+  // agent.yaml that could not be graded as written, or a token count the
+  // gateway could not vouch for.
+  const hasDetail = (tasks) => tasks.some((t) => t.error || t.notes);
 
   const traceUrl = (submissionId, taskId) =>
     `${viewerUrl}/jobs/${submissionId}__${taskId.replaceAll("#", "-")}`;
@@ -186,12 +188,15 @@
                           <span aria-hidden="true">{task.passed ? "✓" : "✗"}</span>
                           <span class="sr-only">{task.passed ? "passed" : "failed"}</span>
                         </td>
-                        <td class="name">{task.task_id}</td>
+                        <td class="name" title={task.agent ? `ran with ${task.agent}` : ""}>
+                          {task.task_id}
+                        </td>
                         <td class="text-right tabular">{Math.round(task.duration_s)}s</td>
                         {#if hasDetail(row.tasks)}
                           <!-- Only a real error earns a column: "failed" here
                                would repeat the marker. -->
-                          <td class="detail" title={task.error ?? ""}>{task.error ?? ""}</td>
+                          {@const detail = task.error ?? task.notes ?? ""}
+                          <td class="detail" title={detail}>{detail}</td>
                         {/if}
                         <td class="text-right">
                           {#if viewerUrl && task.status === "done"}
@@ -226,9 +231,25 @@
             <span class="note">running</span>
           </td>
           <td class="px-2 py-2">{row.commit}</td>
-          <td class="px-2 py-2 text-right tabular-nums" colspan="2">
+          <!-- Spans passed, tokens and duration: three columns with nothing to
+               say until the submission finishes. Get this count wrong and every
+               cell after it sits under the wrong heading. -->
+          <td class="px-2 py-2 text-right tabular-nums" colspan="3">
             {row.completed} of {row.task_count} tasks done
+            <!-- A rollout that never ran is why a submission sits here after
+                 its last task finished, so saying so is the difference between
+                 "still going" and "somebody needs to redrive the queue". -->
+            {#if row.errored}
+              <span class="note">{row.errored} failed to run</span>
+            {/if}
           </td>
+          <!-- The one column that means something before a submission finishes:
+               when it was sent. The progress cell spans the score and token
+               columns, which have no value yet, but leaving this empty made a
+               running submission look undated. -->
+          <td class="px-2 py-2">{clockTime(row.created_at)}</td>
+          <!-- The chevron column. A running row has no task detail to open, but
+               the cell has to exist or the header and the body disagree. -->
           <td></td>
         </tr>
       {/each}

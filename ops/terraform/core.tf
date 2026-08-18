@@ -10,6 +10,13 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    # ncecere's, not BerriAI's own: that one ignores a supplied `key` and keeps
+    # no copy of the one it mints, so it produces keys nobody can retrieve.
+    # Tested, both of them, against a live gateway.
+    litellm = {
+      source  = "ncecere/litellm"
+      version = "~> 2.0"
+    }
   }
 
   # Partial config: the bucket name carries the account id, so it lives in
@@ -56,8 +63,17 @@ resource "aws_sqs_queue" "rollouts" {
   # budget. At 900s a slow rollout was redelivered while the first copy was
   # still running, so two workers did the same work and the retry budget went
   # with it.
-  visibility_timeout_seconds = 2400
-  message_retention_seconds  = 14400
+  #
+  # Derived from the tasks rather than guessed, because the guess was wrong: a
+  # hand-set 2400 was already 900s short of a task allowed 1800s to build, 1200s
+  # to run and 300s to verify, and the next slow task would have shortened it
+  # again without anyone noticing.
+  visibility_timeout_seconds = local.visibility_timeout_sec
+  # Longer than the event, and longer than five attempts of the worst rollout
+  # can take. At four hours a message that spent its afternoon being retried
+  # expired instead of reaching the DLQ, and a rollout nobody can see is a
+  # submission that never finishes.
+  message_retention_seconds = 43200
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.rollouts_dlq.arn
@@ -127,9 +143,36 @@ data "aws_iam_policy_document" "api" {
 
   statement {
     # Scan backs the results endpoint; PutItem writes the submission's _meta
-    # row. Results themselves are the worker's to write.
-    actions   = ["dynamodb:Scan", "dynamodb:PutItem"]
+    # row; UpdateItem spends one of the team's five submissions, conditionally,
+    # which is the only way two simultaneous submits cannot both be the fifth.
+    # Results themselves are the worker's to write.
+    actions   = ["dynamodb:Scan", "dynamodb:PutItem", "dynamodb:UpdateItem"]
     resources = [aws_dynamodb_table.results.arn]
+  }
+
+  statement {
+    # The team keys, which are what /submit authenticates against: the bearer
+    # token says which team is submitting, so the name is no longer something a
+    # caller asserts about itself. Read-only, and scoped to the one path.
+    actions = ["ssm:GetParametersByPath", "ssm:GetParameter", "ssm:GetParameters"]
+    # Both: GetParametersByPath authorises against the path itself, and reading
+    # one parameter authorises against the parameter. With only the wildcard the
+    # API got AccessDenied on every submit and answered 500.
+    resources = [
+      "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/${local.name}/team-keys",
+      "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/${local.name}/team-keys/*",
+    ]
+  }
+
+  statement {
+    # SecureString, so reading one is also a decrypt.
+    actions   = ["kms:Decrypt"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["ssm.${var.region}.amazonaws.com"]
+    }
   }
 }
 
@@ -169,6 +212,13 @@ variable "worker_replicas" {
   default = 12
 }
 
+# The blast radius if a team's key leaks, in dollars. A whole event of rollouts
+# is single digits, so this is generous and still bounded.
+variable "team_budget" {
+  type    = number
+  default = 5
+}
+
 variable "rate_limit_rpm" {
   type    = number
   default = 60
@@ -180,21 +230,76 @@ variable "rate_limit_rpm" {
 # the deployed API to grading a single task.
 #
 # Leave null to grade every task. dev.tfvars sets it to a subset on purpose.
+#
+# Changing what is here is only half the change: the worker resolves a task
+# against the tasks/ baked into its own image, deliberately, so a team cannot
+# ship its own verifier. Apply without `just deploy` and every rollout of the
+# new task records "unknown task <id>", which no longer scores zero -- it holds
+# the submission unfinished until the image catches up and `just ops::redrive`
+# puts the rollouts back. The worker prints the tasks it carries on startup.
 variable "task_ids" {
   type    = string
   default = null
 }
 
 locals {
-  all_task_ids = sort([
-    for f in fileset("${path.module}/../../tasks", "*/task.toml") : dirname(f)
-  ])
-  task_ids = coalesce(var.task_ids, join(",", local.all_task_ids))
+  admin_cidrs = coalesce(var.admin_cidrs, var.dashboard_cidrs)
+
+  task_files = {
+    for f in fileset("${path.module}/../../tasks", "*/task.toml") :
+    dirname(f) => file("${path.module}/../../tasks/${f}")
+  }
+
+  all_task_ids = sort(keys(local.task_files))
+  task_ids     = coalesce(var.task_ids, join(",", local.all_task_ids))
+
+  # What one rollout of each task is allowed to take: the build, the agent and
+  # the verifier, each with its own timeout in task.toml. `build_timeout_sec`
+  # ends in `timeout_sec`, so one expression catches all three.
+  task_budget_sec = {
+    for id, body in local.task_files :
+    id => sum([for m in regexall("timeout_sec[ \t]*=[ \t]*([0-9.]+)", body) : tonumber(m[0])])
+  }
+
+  # Plus the part no task declares: pulling the base image, waiting on the
+  # base-image build lock behind another replica, and cloning the submission.
+  rollout_overhead_sec = 900
+
+  # Every one of these is a property of the task suite, so the fleet and the
+  # queue are sized from the suite instead of from a number somebody set once.
+  # A task that grows its budget or its memory moves them on the next apply.
+  worst_rollout_sec      = max(values(local.task_budget_sec)...)
+  visibility_timeout_sec = ceil(local.worst_rollout_sec + local.rollout_overhead_sec)
+
+  task_cpus = max([
+    for body in values(local.task_files) : tonumber(regex("cpus[ \t]*=[ \t]*([0-9]+)", body)[0])
+  ]...)
+  task_memory_mb = max([
+    for body in values(local.task_files) : tonumber(regex("memory_mb[ \t]*=[ \t]*([0-9]+)", body)[0])
+  ]...)
+}
+
+output "task_budgets" {
+  description = "Worst-case seconds and MiB one rollout can ask for, which is what the queue and the fleet are sized on."
+  value = {
+    worst_rollout_sec  = local.worst_rollout_sec
+    visibility_timeout = local.visibility_timeout_sec
+    task_cpus          = local.task_cpus
+    task_memory_mb     = local.task_memory_mb
+  }
 }
 
 variable "max_submissions" {
   type    = number
   default = 5
+}
+
+# Who may reach the gateway's admin API. Defaults to whoever may reach the
+# dashboard, because both answer the same question -- where do we operate from --
+# and one knob is easier to narrow than two that must agree.
+variable "admin_cidrs" {
+  type    = list(string)
+  default = null
 }
 
 variable "dashboard_cidrs" {

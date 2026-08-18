@@ -9,13 +9,11 @@ services:
       - "4000:4000"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      # Local dev behind a TLS-intercepting corporate proxy: containers do not
-      # trust the corporate CA, so outbound HTTPS fails with
-      # CERTIFICATE_VERIFY_FAILED. Point CORP_CA_FILE at a copy of the bundle
-      # somewhere Docker can actually share (/etc is not shared by Rancher
-      # Desktop or Docker Desktop). Harmless on the AWS workers, where there is
-      # no interception.
-      - ${CORP_CA_FILE:-./config.yaml}:/etc/ssl/corp-ca.pem:ro
+      # config.yaml names hooks.proxy_handler_instance as a callback, so the
+      # module has to be beside it. Without this the proxy exits at startup with
+      # "No module named 'hooks'" -- the deployed image copies both, and only the
+      # local one had to be told.
+      - ./hooks.py:/app/hooks.py:ro
       # Your own AWS credentials, so the local gateway signs for Bedrock the
       # same way the deployed one does with its task role. Read-only, and it
       # needs the SSO cache, so run `aws sso login` first.
@@ -26,8 +24,6 @@ services:
       AWS_REGION: ${AWS_REGION:-eu-central-1}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local-dev}
       DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm
-      SSL_CERT_FILE: ${CORP_CA_FILE:+/etc/ssl/corp-ca.pem}
-      REQUESTS_CA_BUNDLE: ${CORP_CA_FILE:+/etc/ssl/corp-ca.pem}
     depends_on:
       db:
         condition: service_healthy
