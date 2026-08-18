@@ -92,6 +92,9 @@ directories land on EFS, mounted by both the workers and the API, so
 `harbor view` sees every rollout from one place rather than only the ones a
 given replica happened to run.
 
+Why an EC2 fleet rather than Lambda, with the measurements behind it:
+[`docs/plans/2026-08-10-executor-design.md`](../docs/plans/2026-08-10-executor-design.md).
+
 ## Architecture
 
 ```mermaid
@@ -270,11 +273,13 @@ Constraints worth knowing before you author tasks or a harness:
 
 ```
 just ops::team-keys          # print the teams' keys, to hand out at kickoff
-just ops::master-key         # only for a local gateway: copies it into .env
 ```
 
 The master key is terraform's too, so there is nothing to set up by hand before
-the first apply. Rotating it is `terraform taint random_password.litellm_master`
+the first apply, and nothing to copy anywhere: a local `just ops::gateway` has
+its own Postgres, so its virtual keys are its own rows and its master key is
+whatever LITELLM_MASTER_KEY says, defaulting to `sk-local-dev`. Only a gateway
+sharing the deployed database would need the deployed value. Rotating it is `terraform taint random_password.litellm_master`
 and an apply: every team key is derived from it and is recreated with it, and a
 fingerprint in the task definitions rolls the gateway and the workers, which
 would otherwise keep authenticating with the value they read at startup.
@@ -302,8 +307,8 @@ the caller makes about itself -- before this, anyone could spend another team's
 five submissions by typing their name. Revoking is deleting the name from
 `teams.yaml` and applying.
 
-Adding a team after the event has started is safe: apply mints only the new key,
-then `register-keys`.
+Adding a team after the event has started is safe: an apply mints only the new
+key and leaves the others alone.
 
 
 - [ ] Author and calibrate the remaining tasks. Half a day each is realistic,

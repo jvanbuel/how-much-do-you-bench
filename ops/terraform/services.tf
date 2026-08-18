@@ -125,6 +125,9 @@ resource "aws_ecs_task_definition" "api" {
       { name = "BENCHMARK_REGION", value = var.region },
       { name = "TASKS", value = local.task_ids },
       { name = "MAX_SUBMISSIONS", value = tostring(var.max_submissions) },
+      # Where the team keys live. Passed whole rather than rebuilt from a prefix
+      # in two places, which is how the API ended up reading a path nothing set.
+      { name = "TEAM_KEY_PATH", value = "/${local.name}/team-keys" },
       { name = "VIEWER_URL", value = var.viewer_replicas > 0 ? "https://${local.traces_fqdn}" : "" },
     ]
     # Read-only: the API surfaces job directories, the worker writes them.

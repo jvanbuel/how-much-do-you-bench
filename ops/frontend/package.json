@@ -10,7 +10,6 @@
     "@fontsource/dm-sans": "^5.3.0",
     "@fontsource/el-messiri": "^5.3.0",
     "@skeletonlabs/skeleton": "^5.0.0",
-    "@skeletonlabs/skeleton-svelte": "^5.0.0",
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
     "@tailwindcss/vite": "^4.3.3",
     "svelte": "^5.42.2",

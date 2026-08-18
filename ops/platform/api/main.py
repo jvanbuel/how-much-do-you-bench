@@ -57,7 +57,7 @@ def _repo_url(url: str) -> str:
 # and only the account can decrypt them. Cached briefly so a burst of submits is
 # not a burst of SSM calls, and short enough that deleting a team's parameter
 # takes effect within a minute rather than at the next deploy.
-KEY_PATH = f"/{os.environ.get('PREFIX', 'de-benchmark')}/team-keys"
+KEY_PATH = os.environ.get("TEAM_KEY_PATH", "/de-benchmark/team-keys")
 KEY_TTL = 60.0
 _keys: dict[str, str] = {}
 _keys_read_at = 0.0
