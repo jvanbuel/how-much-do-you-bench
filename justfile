@@ -45,6 +45,11 @@ eval task="incremental-dupes" agent_dir="agent": base
       --ae GATEWAY_URL="$GW" \
       --ae GATEWAY_API_KEY="$KEY" --ae ANTHROPIC_API_KEY="$KEY" \
       --ae OPENAI_API_KEY="$KEY"
+    # These do sit in argv, where any local process can read them while the
+    # rollout runs. Left as they are: --ae is the only way to put a variable in
+    # the agent's container (--env-file loads harbor's own environment, not the
+    # container's), this is a laptop rather than a shared host, and the same key
+    # is already in .env beside it.
 
 
 # Refuses uncommitted or unpushed work and sends the full commit hash, because
@@ -67,8 +72,12 @@ submit team:
     echo "submitting $SHA to $URL"
     # The same key that reaches the model. It is what says which team this is:
     # the name below is a label, and a wrong one is refused rather than believed.
+    #
+    # Handed to curl through a config file on a file descriptor rather than as
+    # an argument: everything in argv is readable by any process on the machine
+    # for as long as the command runs.
     curl -fsS -X POST {{api_url}}/submit -H 'content-type: application/json' \
-      -H "Authorization: Bearer $KEY" \
+      --config <(printf 'header = "Authorization: Bearer %s"\n' "$KEY") \
       -d "{\"team\":\"{{team}}\",\"repo_url\":\"$URL\",\"commit\":\"$SHA\"}"
     echo
 
