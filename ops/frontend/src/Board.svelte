@@ -1,5 +1,5 @@
 <script>
-  import { sortRows } from "./lib/scoring.js";
+  import { clockTime, sortRows } from "./lib/scoring.js";
 
   /** One sortable table. Two boards said the same thing twice; sorting is the
    * affordance people already expect from a leaderboard.
@@ -240,7 +240,11 @@
               <span class="note">{row.errored} failed to run</span>
             {/if}
           </td>
-          <td></td>
+          <!-- The one column that means something before a submission finishes:
+               when it was sent. The progress cell spans the score and token
+               columns, which have no value yet, but leaving this empty made a
+               running submission look undated. -->
+          <td class="px-2 py-2">{clockTime(row.created_at)}</td>
         </tr>
       {/each}
       {#if !rows.length && !pending.length}
