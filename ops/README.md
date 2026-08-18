@@ -269,9 +269,15 @@ Constraints worth knowing before you author tasks or a harness:
 ## Before the event
 
 ```
-just ops::master-key         # once, BEFORE the first apply: the provider needs it
 just ops::team-keys          # print the teams' keys, to hand out at kickoff
+just ops::master-key         # only for a local gateway: copies it into .env
 ```
+
+The master key is terraform's too, so there is nothing to set up by hand before
+the first apply. Rotating it is `terraform taint random_password.litellm_master`
+and an apply: every team key is derived from it and is recreated with it, and a
+fingerprint in the task definitions rolls the gateway and the workers, which
+would otherwise keep authenticating with the value they read at startup.
 
 Teams are `ops/teams.yaml`. Terraform generates a key per name, registers it
 with the gateway through the `BerriAI/litellm` provider, and writes it to SSM as

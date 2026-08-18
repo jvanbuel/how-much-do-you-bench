@@ -37,6 +37,11 @@ resource "aws_ecs_task_definition" "gateway" {
       { name = "DATABASE_URL", value = "postgresql://${var.db_username}:${random_password.db.result}@${aws_db_instance.litellm.endpoint}/litellm" },
       { name = "AWS_REGION", value = var.region },
       { name = "AWS_DEFAULT_REGION", value = var.region },
+      # Not read by anything. Its only job is to change when the master key
+      # changes, so the task definition changes, so the service rolls and the
+      # container re-reads SSM. A rotated parameter restarts nothing by itself,
+      # and a container holding the old value fails every mint with a 401.
+      { name = "MASTER_KEY_FINGERPRINT", value = substr(sha256(aws_ssm_parameter.litellm_master_key.value), 0, 12) },
     ]
     secrets = [
       { name = "LITELLM_MASTER_KEY", valueFrom = aws_ssm_parameter.litellm_master_key.arn },
@@ -215,6 +220,11 @@ resource "aws_ecs_task_definition" "worker" {
       { name = "GATEWAY_URL", value = local.gateway_url },
       { name = "GATEWAY_ADMIN_URL", value = local.admin_url },
       { name = "RATE_LIMIT_RPM", value = tostring(var.rate_limit_rpm) },
+      # Not read by anything. Its only job is to change when the master key
+      # changes, so the task definition changes, so the service rolls and the
+      # container re-reads SSM. A rotated parameter restarts nothing by itself,
+      # and a container holding the old value fails every mint with a 401.
+      { name = "MASTER_KEY_FINGERPRINT", value = substr(sha256(aws_ssm_parameter.litellm_master_key.value), 0, 12) },
     ]
     secrets = [
       { name = "LITELLM_MASTER_KEY", valueFrom = aws_ssm_parameter.litellm_master_key.arn },

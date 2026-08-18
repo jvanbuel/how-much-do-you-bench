@@ -14,17 +14,11 @@ locals {
   teams = toset(yamldecode(file("${path.module}/../teams.yaml")).teams)
 }
 
-# Written by `just ops::master-key`, which has to run once before the first
-# apply: the provider authenticates with it, and there is no key to mint keys
-# with until it exists.
-data "aws_ssm_parameter" "litellm_master_key" {
-  name            = "/${local.name}/litellm-master-key"
-  with_decryption = true
-}
-
 provider "litellm" {
   api_base = "https://${local.gateway_fqdn}"
-  api_key  = data.aws_ssm_parameter.litellm_master_key.value
+  # The value terraform generated, not a read-back of it: nothing has to exist
+  # before the first apply, and there is no ordering to get wrong.
+  api_key = "sk-${random_password.litellm_master.result}"
 }
 
 # Generated here rather than by the gateway, because `key` is a settable
@@ -48,8 +42,15 @@ resource "litellm_key" "team" {
   max_budget = var.team_budget
 
   # The route this provider talks to does not exist until that rule does, and
-  # terraform has no other reason to order them.
-  depends_on = [aws_lb_listener_rule.gateway_admin]
+  # the gateway has to be running the master key it is being authenticated with.
+  depends_on = [aws_lb_listener_rule.gateway_admin, aws_ecs_service.gateway]
+
+  lifecycle {
+    # A virtual key is derived from the master key, so rotating the master
+    # invalidates every one of these. Recreating them is the honest response;
+    # leaving them in state would be terraform reporting keys that no longer work.
+    replace_triggered_by = [random_password.litellm_master]
+  }
 }
 
 # Where a human, and the API, read a team's key. SecureString, so reading one is

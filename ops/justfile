@@ -17,26 +17,26 @@ rate_limit_rpm := env_var_or_default("RATE_LIMIT_RPM", "60")
 # as its master key and the first team-keys call fails with no hint why. Run
 # this once after the first apply.
 #
-# The value goes to SSM for the deployed gateway and to .env for the local one;
-# the two must match or a key minted against one is rejected by the other.
+# Terraform generates it and owns it: rotating is `terraform taint
+# random_password.litellm_master` and an apply, which recreates every team key
+# with it and rolls the services holding the old one.
 #
-# Generate the gateway's master key. Prints nothing.
+# This only copies the deployed value into .env, for `just ops::gateway` -- a
+# local gateway and the deployed one must agree or a key minted against one is
+# rejected by the other.
+#
+# Copy the master key into .env for the local gateway. Prints nothing.
 master-key:
     #!/usr/bin/env bash
     set -euo pipefail
-    KEY="sk-$(openssl rand -hex 20)"
-    AWS_PROFILE={{aws_profile}} aws ssm put-parameter --region {{aws_region}} \
-      --name /de-benchmark/litellm-master-key --type SecureString \
-      --value "$KEY" --overwrite >/dev/null
+    KEY=$(AWS_PROFILE={{aws_profile}} aws ssm get-parameter --region {{aws_region}} \
+      --name /de-benchmark/litellm-master-key --with-decryption \
+      --query Parameter.Value --output text)
     touch .env
     grep -v '^LITELLM_MASTER_KEY=' .env > .env.tmp || true
     printf 'LITELLM_MASTER_KEY=%s\n' "$KEY" >> .env.tmp
     mv .env.tmp .env
-    echo "master key written to SSM and .env"
-    echo "rolling the gateway so it picks it up..."
-    AWS_PROFILE={{aws_profile}} aws ecs update-service --region {{aws_region}} \
-      --cluster de-benchmark --service gateway --force-new-deployment >/dev/null
-    echo "done. existing virtual keys are invalidated; re-run just team-keys."
+    echo "master key copied from SSM into .env"
 
 # A team key can call /v1 and nothing else: LiteLLM refuses admin routes for a
 # virtual key, and the listener only forwards /v1 and the admin routes terraform
