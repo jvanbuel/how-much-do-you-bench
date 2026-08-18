@@ -454,6 +454,29 @@ def ensure_base_image() -> None:
             print(f"base image ready: {result.stdout.strip()}", flush=True)
 
 
+def sweep_stale_containers() -> None:
+    """Remove rollout containers too old to belong to a live rollout.
+
+    The per-rollout teardown covers the normal path, but a worker killed mid
+    rollout never reaches it, and the container does not exit on its own: the
+    task images end in `sleep infinity`. Twelve were found alive at nearly three
+    hours old, each holding the memory its task reserved, and one of them was
+    still calling the gateway with a key the rollout had already retired.
+
+    Thirty minutes is well past any live rollout -- the agent phase caps at 300s
+    and the build at 1800s -- so this cannot touch a replica's current work.
+    """
+    script = (
+        "for c in $(docker ps -q --filter name=env-main); do "
+        "s=$(docker inspect -f '{{.State.StartedAt}}' $c); "
+        'age=$(( $(date +%s) - $(date -d "$s" +%s) )); '
+        "[ $age -gt 1800 ] && docker rm -f $c >/dev/null; done"
+    )
+    with contextlib.suppress(Exception):
+        subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=120)
+        print("swept stale rollout containers", flush=True)
+
+
 def main() -> int:
     if not QUEUE_URL:
         # Read from the environment rather than required at import, so the
@@ -467,6 +490,7 @@ def main() -> int:
     # enqueues rollouts nothing can run, and this line is how that is spotted in
     # the first minute rather than in the results.
     tasks = sorted(p.parent.name for p in TASKS_DIR.glob("*/task.toml"))
+    sweep_stale_containers()
     print(f"polling {QUEUE_URL}", flush=True)
     print(f"{len(tasks)} tasks in this image: {', '.join(tasks)}", flush=True)
     ensure_base_image()
