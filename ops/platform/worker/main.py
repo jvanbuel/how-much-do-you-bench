@@ -108,8 +108,23 @@ def harbor_command(job: dict, slug: str, task_path: Path, config: Path | None, k
         # A team forks this repo, so their agent is a directory in it rather
         # than the whole checkout.
         "--ae", f"SUBMISSION_SUBDIR={AGENT_SUBDIR}",
+        # Ours reads GATEWAY_*; an off-the-shelf harness reads the vendor's
+        # variables and never heard of these. Passing every form is what makes
+        # `name: opencode` in an agent.yaml reach the same model our own
+        # entrypoint does -- without them the harness starts, finds no endpoint
+        # and exits, and the rollout records a failure with zero model requests.
+        # `just eval` has always set these, which is why it worked locally and
+        # only the graded run was broken.
         "--ae", f"GATEWAY_URL={GATEWAY_URL}",
         "--ae", f"GATEWAY_API_KEY={key}",
+        "--ae", f"OPENAI_BASE_URL={GATEWAY_URL}",
+        "--ae", f"OPENAI_API_KEY={key}",
+        # Claude Code appends /v1/messages itself, so it wants the host root.
+        "--ae", f"ANTHROPIC_BASE_URL={GATEWAY_URL.removesuffix('/v1')}",
+        "--ae", f"ANTHROPIC_API_KEY={key}",
+        # Gemma on Bedrock refuses function tools when a reasoning request comes
+        # with them, and an Anthropic `thinking` block becomes exactly that.
+        "--ae", "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1",
     ]
 
 
