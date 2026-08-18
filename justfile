@@ -36,18 +36,6 @@ eval task="incremental-dupes" agent_dir="agent": base
     export OPENAI_BASE_URL="$GW"
 
     MOUNTS='[{"type":"bind","source":"{{justfile_directory()}}/{{agent_dir}}","target":"/submission-src","read_only":true}'
-    CA=()
-    # Behind a TLS-intercepting proxy the agent's HTTPS call fails with a bare
-    # connection error that never mentions TLS. See CORP_CA_FILE in the README.
-    if [ -f "${CORP_CA_FILE:-}" ]; then
-      MOUNTS+=',{"type":"bind","source":"'"$CORP_CA_FILE"'","target":"/etc/ssl/ca.pem","read_only":true}'
-      # Python, curl and node each look at a different variable, and an agent
-      # that installs itself uses all three.
-      CA=(--ae SSL_CERT_FILE=/etc/ssl/ca.pem
-          --ae REQUESTS_CA_BUNDLE=/etc/ssl/ca.pem
-          --ae CURL_CA_BUNDLE=/etc/ssl/ca.pem
-          --ae NODE_EXTRA_CA_CERTS=/etc/ssl/ca.pem)
-    fi
 
     # harbor is a uv tool, so the repo is not on its sys.path.
     PYTHONPATH={{justfile_directory()}}/ops harbor run \
@@ -56,8 +44,13 @@ eval task="incremental-dupes" agent_dir="agent": base
       --ae SUBMISSION_LOCAL_DIR=/submission-src \
       --ae GATEWAY_URL="$GW" \
       --ae GATEWAY_API_KEY="$KEY" --ae ANTHROPIC_API_KEY="$KEY" \
-      --ae OPENAI_API_KEY="$KEY" \
-      "${CA[@]}"
+      --ae OPENAI_API_KEY="$KEY"
+    # These do sit in argv, where any local process can read them while the
+    # rollout runs. Left as they are: --ae is the only way to put a variable in
+    # the agent's container (--env-file loads harbor's own environment, not the
+    # container's), this is a laptop rather than a shared host, and the same key
+    # is already in .env beside it.
+
 
 # Refuses uncommitted or unpushed work and sends the full commit hash, because
 # each of those fails twenty minutes later rather than immediately.
@@ -69,13 +62,25 @@ submit team:
     git diff --quiet && git diff --cached --quiet \
       || { echo "you have uncommitted changes; commit them first"; exit 1; }
     git fetch -q origin
-    BRANCH=$(git rev-parse --abbrev-ref HEAD)
-    git merge-base --is-ancestor HEAD "origin/$BRANCH" 2>/dev/null \
-      || { echo "HEAD is not on origin/$BRANCH; run: git push"; exit 1; }
+    # Is this commit on the remote, rather than is it on the remote copy of a
+    # branch with the same name. A detached HEAD -- which is how jj leaves a
+    # colocated repository -- has no branch name to compare, and reported an
+    # up-to-date commit as unpushed.
+    git branch -r --contains HEAD 2>/dev/null | grep -q . \
+      || { echo "this commit is not on the remote; run: git push"; exit 1; }
     SHA=$(git rev-parse HEAD)
     URL=$(git remote get-url origin | sed -e 's#^git@github.com:#https://github.com/#' -e 's#\.git$##')
+    KEY="${GATEWAY_API_KEY:-${LITELLM_MASTER_KEY:-}}"
+    [ -n "$KEY" ] || { echo "set GATEWAY_API_KEY to your team key (see the kickoff message)"; exit 1; }
     echo "submitting $SHA to $URL"
+    # The same key that reaches the model. It is what says which team this is:
+    # the name below is a label, and a wrong one is refused rather than believed.
+    #
+    # Handed to curl through a config file on a file descriptor rather than as
+    # an argument: everything in argv is readable by any process on the machine
+    # for as long as the command runs.
     curl -fsS -X POST {{api_url}}/submit -H 'content-type: application/json' \
+      --config <(printf 'header = "Authorization: Bearer %s"\n' "$KEY") \
       -d "{\"team\":\"{{team}}\",\"repo_url\":\"$URL\",\"commit\":\"$SHA\"}"
     echo
 
