@@ -81,7 +81,11 @@ resource "aws_lb_listener_rule" "gateway_admin" {
 
   condition {
     path_pattern {
-      values = ["/key/*", "/team/*", "/model/*", "/budget/*", "/credential/*"]
+      # Only what terraform manages, which is keys. An ALB rule allows five
+      # condition values in total across every condition, and the host header
+      # and the source range are two of them -- so this cannot become a list of
+      # every admin route anyway. Add a route here when something manages one.
+      values = ["/key/*"]
     }
   }
 
