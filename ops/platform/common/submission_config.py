@@ -6,8 +6,12 @@ different agent than the board does: a team iterating against opencode with a
 skill directory attached was scored on `uv run agent` with neither.
 
 So the worker fetches the submitted commit, reads its `agent.yaml`, and hands
-Harbor a config built from it. What it does not do is hand Harbor the team's
-file verbatim. A JobConfig can also carry `mounts`, `env` and a task path, and
+Harbor a config built from it. The API runs the same checks at submit time, so
+a config the worker would refuse is a 400 while the team is still at the
+keyboard rather than a note on the board twenty minutes later. The worker's
+run is still the one that counts: only it holds the Docker socket, and only
+its verdict decides what gets graded. What neither does is hand Harbor the
+team's file verbatim. A JobConfig can also carry `mounts`, `env` and a task path, and
 this process drives the host's Docker daemon: a bind mount named in a
 participant's config would be resolved on the host. Only the agent-selection
 fields are copied across, into a config this module writes itself.
@@ -47,11 +51,12 @@ class ConfigError(Exception):
     """The submitted config cannot be graded as written."""
 
 
-def fetch(repo_url: str, commit: str, dest: Path) -> None:
+def fetch(repo_url: str, commit: str, dest: Path, timeout: float = CLONE_TIMEOUT) -> None:
     """Shallow-fetch one commit into `dest`.
 
     Single commit rather than a clone, so fetch time is flat however much
-    history a team accumulated during the event.
+    history a team accumulated during the event. `timeout` is per git step;
+    the API passes a short one because its caller is an HTTP request.
     """
     # Checked again here rather than trusted from the queue: this URL is handed
     # to git in a container holding the Docker socket. Same rule as the API's,
@@ -80,7 +85,7 @@ def fetch(repo_url: str, commit: str, dest: Path) -> None:
         [*git, "checkout", "-q", "FETCH_HEAD"],
     ]
     for step in steps:
-        done = subprocess.run(step, capture_output=True, text=True, timeout=CLONE_TIMEOUT)
+        done = subprocess.run(step, capture_output=True, text=True, timeout=timeout)
         if done.returncode != 0:
             raise ConfigError(f"{' '.join(step[-3:])}: {done.stderr.strip()[:300]}")
 

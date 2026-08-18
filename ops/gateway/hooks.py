@@ -37,6 +37,13 @@ KEEP = re.compile(
 )
 
 
+def _name(tool: Any) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    fn = tool.get("function")
+    return str((fn or {}).get("name") if isinstance(fn, dict) else tool.get("name") or "")
+
+
 def _essential_first(tools: list) -> list:
     """The tools worth keeping when the model will not take them all.
 
@@ -44,13 +51,7 @@ def _essential_first(tools: list) -> list:
     alphabetical, so the last ten are TaskCreate onwards -- but Write is 28th,
     and Write is the one to keep. Selection is by name, not position.
     """
-    def name(tool: Any) -> str:
-        if not isinstance(tool, dict):
-            return ""
-        fn = tool.get("function")
-        return str((fn or {}).get("name") if isinstance(fn, dict) else tool.get("name") or "")
-
-    wanted = [t for t in tools if KEEP.match(name(t))]
+    wanted = [t for t in tools if KEEP.match(_name(t))]
     rest = [t for t in tools if t not in wanted]
     return (wanted + rest)[:MAX_TOOLS]
 
@@ -77,7 +78,18 @@ class ToolsBeatReasoning(CustomLogger):
         # everything else. Trim rather than fail: a harness with 28 tools works
         # with the 18 that matter, and one with fewer is untouched.
         if len(kwargs["tools"]) > MAX_TOOLS:
-            kwargs["tools"] = _essential_first(kwargs["tools"])
+            before = kwargs["tools"]
+            kwargs["tools"] = _essential_first(before)
+            # Said out loud, because the harness's system prompt still describes
+            # the dropped tools and the model may name them in text. Without
+            # this line, "why does it keep mentioning TaskCreate" is a mystery;
+            # with it, the answer is in the gateway log.
+            dropped = [_name(t) for t in before if t not in kwargs["tools"]]
+            print(
+                f"trimmed tools {len(before)} -> {len(kwargs['tools'])}, "
+                f"dropped: {', '.join(dropped)}",
+                flush=True,
+            )
 
         # Bedrock also rejects strict tool schemas.
         for tool in kwargs["tools"]:

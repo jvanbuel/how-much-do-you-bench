@@ -23,8 +23,8 @@ from pathlib import Path
 
 import boto3
 
-from common import results
-from worker import submission_config, trajectory
+from common import results, submission_config
+from worker import trajectory
 from worker.gateway import delete_key, mint_key, usage_for_key
 
 QUEUE_URL = os.environ.get("QUEUE_URL", "")

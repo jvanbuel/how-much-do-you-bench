@@ -9,6 +9,7 @@ import hmac
 import json
 import os
 import re
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -20,11 +21,16 @@ from pydantic import BaseModel
 
 from common import results
 from common import repo
+from common import submission_config
 from common.scoring import accuracy_board, contenders, pareto
 
 QUEUE_URL = os.environ["QUEUE_URL"]
 TASKS = os.environ.get("TASKS", "incremental-dupes").split(",")
 MAX_SUBMISSIONS = int(os.environ.get("MAX_SUBMISSIONS", "5"))
+MODEL = os.environ.get("MODEL", "gemma")
+# Per git step, well under the load balancer's idle timeout: a submission check
+# is an HTTP request, not a rollout.
+FETCH_TIMEOUT = 20.0
 # Where the trajectory viewer is served. Empty when it is not deployed, which
 # the dashboard reads as "render no trace links" rather than dead ones.
 VIEWER_URL = os.environ.get("VIEWER_URL", "").rstrip("/")
@@ -114,6 +120,33 @@ def _authenticated(authorization: str | None) -> str:
     return team
 
 
+def _check_agent_config(repo_url: str, commit: str) -> None:
+    """Refuse a submission whose agent.yaml the worker would refuse.
+
+    The same checks grading runs, moved to where the team can still act on the
+    answer: the worker's fallback records *why* a config was ignored, but as a
+    note on the board nobody reads, twenty minutes after the fix was cheap.
+    Checked before the submission is spent, so a bad config costs nothing.
+
+    Only a ConfigError rejects. Anything else -- a network blip, a slow fetch --
+    lets the submission through, because grading re-runs these checks and is
+    the authority; this is feedback, not the boundary.
+    """
+    with tempfile.TemporaryDirectory(prefix="submit-check-") as tmp:
+        try:
+            submission_config.fetch(repo_url, commit, Path(tmp), timeout=FETCH_TIMEOUT)
+            submission_config.build(Path(tmp), MODEL)
+        except submission_config.ConfigError as exc:
+            raise HTTPException(
+                400,
+                f"agent.yaml cannot be graded as written: {exc}. "
+                "Fix it, push, and submit again -- this attempt was not counted. "
+                "(Just pushed? GitHub may still be replicating; retry in a minute.)",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            print(f"!! agent.yaml pre-check skipped for {commit[:8]}: {exc}", flush=True)
+
+
 @app.post("/submit")
 def submit(request: SubmitRequest, authorization: str = Header(default=None)):
     team = _authenticated(authorization)
@@ -132,6 +165,7 @@ def submit(request: SubmitRequest, authorization: str = Header(default=None)):
             "commit must be the full 40-character SHA. Submit with: just submit your-team",
         )
     repo_url = _repo_url(request.repo_url)
+    _check_agent_config(repo_url, request.commit)
 
     # Spent before anything is enqueued, and spent atomically: the limit is the
     # only thing standing between one team and the whole fleet.
@@ -247,6 +281,27 @@ def _demo() -> None:
 
     assert _authenticated("Bearer sk-alpha-key") == "alpha"
     assert _authenticated("bearer sk-beta-key") == "beta"  # header names are case-insensitive
+
+    # A config the worker would refuse is a 400 here; anything else -- network,
+    # timeouts -- lets the submission through, because grading is the authority.
+    def raising(exc):
+        def _fetch(*_args, **_kwargs):
+            raise exc
+        return _fetch
+
+    was = submission_config.fetch
+    try:
+        submission_config.fetch = raising(submission_config.ConfigError("bad skills path"))
+        try:
+            _check_agent_config("https://github.com/t/a", "c" * 40)
+            raise AssertionError("a ConfigError did not become a 400")
+        except HTTPException as exc:
+            assert exc.status_code == 400 and "bad skills path" in exc.detail
+        submission_config.fetch = raising(RuntimeError("github down"))
+        _check_agent_config("https://github.com/t/a", "c" * 40)  # must not raise
+    finally:
+        submission_config.fetch = was
+
     print("api ok")
 
 

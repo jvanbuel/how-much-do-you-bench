@@ -134,7 +134,9 @@ worker:
 test:
     PYTHONPATH=ops/platform python3 ops/platform/common/scoring.py
     cd ops/platform && uv run --quiet --with boto3 python -m common.results
-    cd ops/platform && uv run --quiet --with boto3 --with requests --with pyyaml python -m worker.submission_config
+    cd ops/platform && uv run --quiet --with boto3 --with requests --with pyyaml python -m common.submission_config
+    cd ops/platform && QUEUE_URL=self-check RESULTS_TABLE=self-check \
+      uv run --quiet --with boto3 --with fastapi --with pyyaml python -m api.main
     cd ops/platform && DEMO=1 uv run --quiet --with boto3 --with requests --with pyyaml python -m worker.main
     node ops/frontend/src/lib/scoring.test.mjs
 
