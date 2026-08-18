@@ -31,12 +31,8 @@
 # if you were scored on something you did not expect.
 
 agents:
-  # The baseline: an off-the-shelf harness, installed into the task container
-  # for you. Beat it, or work out why you cannot.
-  #
-  # `openai/gemma` is provider/model, which is how opencode names things. The
-  # provider is openai because the gateway speaks that API, not because the
-  # model is.
+  # Benchmarked harness: opencode. One commit per harness, so each submission is
+  # graded on exactly the config in the commit it names.
   - name: opencode
     model_name: openai/gemma
     skills: []
