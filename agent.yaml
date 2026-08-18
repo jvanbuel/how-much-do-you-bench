@@ -26,15 +26,21 @@
 #     the runner's, and a config that sets one is refused rather than obeyed.
 #   * `skills:` paths are resolved inside your commit, so commit the directory.
 #
-# A config the runner cannot grade does not fail your submission: it falls back
-# to running your own `agent/` entrypoint and says why on the board. Check there
-# if you were scored on something you did not expect.
+# A config these rules refuse is rejected at `just submit`, with the reason,
+# and does not spend one of your submissions. If grading still cannot use it
+# (the check is best-effort), it falls back to running your own `agent/`
+# entrypoint and says why on the board -- check there if you were scored on
+# something you did not expect.
 
 agents:
-  # Benchmarked harness: aider. One commit per harness, so each submission is
-  # graded on exactly the config in the commit it names.
-  - name: aider
-    model_name: openai/openai/gemma
+  # The baseline: an off-the-shelf harness, installed into the task container
+  # for you. Beat it, or work out why you cannot.
+  #
+  # `openai/gemma` is provider/model, which is how opencode names things. The
+  # provider is openai because the gateway speaks that API, not because the
+  # model is.
+  - name: opencode
+    model_name: openai/gemma
     skills: []
     mcp_servers: []
     kwargs: {}
@@ -49,12 +55,11 @@ agents:
   #   mcp_servers: []
   #   kwargs: {}
 
-  # Claude Code mostly does NOT work against this model. Its requests reach the
-  # gateway and some succeed, but most come back as an opaque engine error
-  # ("Job registration failed ... Generation failed"). The gateway already
-  # strips the reasoning request and forbids parallel tool calls on its behalf
-  # (see ops/gateway/hooks.py), which fixed the first failure but not this one.
-  # Try it if you like; do not plan your afternoon around it.
+  # Claude Code reaches the model -- the gateway trims its tool list to the 18
+  # this model accepts, of the 28 it sends -- but it does not finish. Measured
+  # on a one-line bug fix: 168 turns, 1.5M input tokens, $7.93, and the bug still
+  # there at the end. It reads and re-plans without acting. Try it if you want to
+  # see that for yourself; do not plan your afternoon around it.
   #
   # - name: claude-code
   #   model_name: gemma
@@ -84,6 +89,10 @@ agents:
   #                                    provider in ~/.pi/agent/models.json
   #
   # Measured on the full suite: aider 11/21, opencode 8/21, codex 4/21.
+  #
+  # Everything known about each harness against this model -- spellings, env
+  # vars, quirks, what the gateway silently does to requests -- is collected in
+  # docs/harnesses.md. Read it before choosing one or debugging one.
   #
   # Harbor also ships adapters for aider, codex, copilot-cli, cursor-cli,
   # gemini-cli, goose, hermes, kimi-cli, langgraph, opencode, openhands,
