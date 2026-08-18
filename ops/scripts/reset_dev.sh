@@ -39,16 +39,13 @@ if [ "${1:-}" != "--yes" ]; then
   [ "$reply" = "reset" ] || { echo "aborted"; exit 1; }
 fi
 
-# Scanned then deleted one key at a time. The table holds a few hundred rows at
-# event scale, so batching would be optimising the wrong thing.
+# One process for the whole table. It was one `aws delete-item` per row, and the
+# cost was never the API: starting the CLI costs about a second in interpreter
+# startup and credential resolution, so a few hundred rows spent minutes
+# spawning processes.
 echo "clearing $TABLE ..."
-aws dynamodb scan --table-name "$TABLE" \
-  --query 'Items[].[submission_id.S,task_id.S]' --output text |
-  while IFS=$'\t' read -r sid tid; do
-    [ -n "$sid" ] || continue
-    aws dynamodb delete-item --table-name "$TABLE" \
-      --key "{\"submission_id\":{\"S\":\"$sid\"},\"task_id\":{\"S\":\"$tid\"}}"
-  done
+AWS_PROFILE="$PROFILE" uv run --quiet --with boto3 \
+  python "$(dirname "$0")/reset_rows.py" "$REGION" "$TABLE"
 
 # PurgeQueue is rate limited to once a minute per queue; the second call fails
 # rather than waits, so the failure is tolerated and reported.
@@ -70,7 +67,14 @@ else
     --document-name AWS-RunShellScript \
     --parameters 'commands=["rm -rf /app/jobs/runs","mkdir -p /app/jobs/runs","echo cleared"]' \
     --query 'Command.CommandId' --output text)
-  sleep 8
+  # Waited a flat 8s and printed whatever was there, which reported success
+  # while a large run directory was still being removed. EFS deletes a file at a
+  # time over NFS, so this is the slow step and worth waiting for.
+  for _ in $(seq 1 40); do
+    state=$(aws ssm get-command-invocation --command-id "$cmd" --instance-id "$iid" \
+      --query Status --output text 2>/dev/null || echo Pending)
+    case "$state" in InProgress|Pending|Delayed) sleep 5 ;; *) break ;; esac
+  done
   aws ssm get-command-invocation --command-id "$cmd" --instance-id "$iid" \
     --query 'StandardOutputContent' --output text | sed 's/^/  /'
 fi
