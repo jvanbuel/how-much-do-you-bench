@@ -231,7 +231,10 @@
             <span class="note">running</span>
           </td>
           <td class="px-2 py-2">{row.commit}</td>
-          <td class="px-2 py-2 text-right tabular-nums" colspan="2">
+          <!-- Spans passed, tokens and duration: three columns with nothing to
+               say until the submission finishes. Get this count wrong and every
+               cell after it sits under the wrong heading. -->
+          <td class="px-2 py-2 text-right tabular-nums" colspan="3">
             {row.completed} of {row.task_count} tasks done
             <!-- A rollout that never ran is why a submission sits here after
                  its last task finished, so saying so is the difference between
@@ -245,6 +248,9 @@
                columns, which have no value yet, but leaving this empty made a
                running submission look undated. -->
           <td class="px-2 py-2">{clockTime(row.created_at)}</td>
+          <!-- The chevron column. A running row has no task detail to open, but
+               the cell has to exist or the header and the body disagree. -->
+          <td></td>
         </tr>
       {/each}
       {#if !rows.length && !pending.length}
