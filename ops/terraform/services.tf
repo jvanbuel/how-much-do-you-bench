@@ -239,6 +239,9 @@ resource "aws_ecs_task_definition" "worker" {
       { name = "GATEWAY_URL", value = local.gateway_url },
       { name = "GATEWAY_ADMIN_URL", value = local.admin_url },
       { name = "RATE_LIMIT_RPM", value = tostring(var.rate_limit_rpm) },
+      # The worst rollout the suite allows, plus room for the build and the
+      # clone. Past this the worker stops waiting on harbor and requeues.
+      { name = "ROLLOUT_TIMEOUT_SEC", value = tostring(local.worst_rollout_sec + 300) },
       # Not read by anything. Its only job is to change when the master key
       # changes, so the task definition changes, so the service rolls and the
       # container re-reads SSM. A rotated parameter restarts nothing by itself,

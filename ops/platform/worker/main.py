@@ -35,6 +35,12 @@ TASKS_DIR = Path(os.environ.get("TASKS_DIR", "tasks")).resolve()
 JOBS_DIR = Path(os.environ.get("JOBS_DIR", "jobs")).resolve()
 MODEL = os.environ.get("MODEL", "gemma")
 RATE_LIMIT_RPM = int(os.environ.get("RATE_LIMIT_RPM", "60"))
+# A ceiling on one rollout, because harbor run had none. A rollout whose
+# container lost its network mid-exec blocked the worker indefinitely: five of
+# them sat silent for half an hour, holding their messages, while eleven other
+# replicas had nothing to do. Terraform passes the suite's worst budget plus
+# margin; the default is that number for the current suite.
+ROLLOUT_TIMEOUT_SEC = float(os.environ.get("ROLLOUT_TIMEOUT_SEC", "3000"))
 # Every graded rollout is one directory here, and `harbor view` is pointed at
 # this directory. Its own subdirectory rather than JOBS_DIR itself so nothing
 # else on the filesystem gets scanned as if it were a job.
@@ -148,6 +154,12 @@ def harness_env(key: str) -> dict[str, str]:
 
 
 def harbor_run(job: dict, slug: str, task_path: Path, config: Path | None, key: str):
+    """Run one rollout, or give up on it.
+
+    Bounded rather than open-ended: harbor enforces its own agent and verifier
+    timeouts, but nothing enforced a limit on harbor itself, and a wedged docker
+    exec is invisible to both.
+    """
     return subprocess.run(
         harbor_command(job, slug, task_path, config, key),
         capture_output=True,
@@ -159,6 +171,7 @@ def harbor_run(job: dict, slug: str, task_path: Path, config: Path | None, key: 
             "PYTHONPATH": str(Path(__file__).resolve().parent.parent),
             **harness_env(key),
         },
+        timeout=ROLLOUT_TIMEOUT_SEC,
     )
 
 
@@ -196,7 +209,15 @@ def run_rollout(job: dict, slug: str, attempt: int) -> dict:
 
         started = time.monotonic()
         try:
-            proc = harbor_run(job, slug, task_path, config, key["key"])
+            try:
+                proc = harbor_run(job, slug, task_path, config, key["key"])
+            except subprocess.TimeoutExpired:
+                # Infrastructure, not a score: harbor's own timeouts should have
+                # ended this long before, so whatever is stuck is not the agent.
+                return {
+                    "status": "error",
+                    "error": f"rollout exceeded {ROLLOUT_TIMEOUT_SEC:.0f}s inside harbor",
+                }
             result = parse_trial(RUNS_DIR / slug)
 
             if rejected_config(config, proc, result):
