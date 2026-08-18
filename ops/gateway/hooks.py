@@ -26,6 +26,18 @@ from litellm.integrations.custom_logger import CustomLogger
 # first call, every time.
 MAX_TOOLS = 18
 
+# The most this model will accept, verified against the endpoint. The default it
+# applies when a client names none is far smaller.
+MAX_OUTPUT_TOKENS = 32000
+
+# What the endpoint says it serves, quoted from its own refusal: "Supported tool
+# types are: function, mcp, custom, namespace, tool_search." The hosted kinds --
+# web_search, image_generation, code_interpreter -- would have to run on the
+# provider's own infrastructure, and Bedrock serves the wire format rather than
+# OpenAI's products. mcp stays in the list because a team may attach an MCP
+# server through agent.yaml.
+SERVED_TOOL_TYPES = (None, "function", "mcp", "custom", "namespace", "tool_search")
+
 # What a coding agent actually needs, and what merely travels with it. Claude
 # Code's 28 include CronCreate, six Task* tools, EnterWorktree, DesignSync,
 # SendMessage and a 21KB Workflow schema -- none of which mean anything inside a
@@ -63,15 +75,51 @@ class ToolsBeatReasoning(CustomLogger):
         if not kwargs.get("tools"):
             return None
 
-        # `thinking` is the Anthropic spelling; it can survive translation.
-        kwargs.pop("thinking", None)
-        if kwargs.get("reasoning_effort") != "none":
-            kwargs["reasoning_effort"] = "none"
+        # Only on chat completions. The refusal is specific to that endpoint --
+        # /v1/responses serves tools and reasoning together, which is the whole
+        # reason it exists -- and codex is the one harness that speaks it. Doing
+        # this to a responses call takes away the reasoning the model needs to
+        # produce a structured tool call, and it answers with prose describing
+        # the call it did not make.
+        on_responses = "responses" in str(getattr(call_type, "value", call_type))
 
-        # This model returns one tool call per turn. Asking for several is not a
-        # slow path, it is a 400 from the engine with no mention of which
-        # parameter caused it.
-        kwargs["parallel_tool_calls"] = False
+        # A client that names no output limit gets the endpoint's own, which is
+        # small enough to cut a response off mid tool call: codex sends none and
+        # its stream ends with "reason: max_output_tokens", leaving the call it
+        # was writing as prose. max_output_tokens is the responses spelling and
+        # this model accepts it -- unlike max_tokens and max_completion_tokens,
+        # which it rejects and config.yaml drops. Only filled in when absent, so
+        # a harness that has an opinion keeps it.
+        if on_responses and not kwargs.get("max_output_tokens"):
+            kwargs["max_output_tokens"] = MAX_OUTPUT_TOKENS
+            print(f"filled in max_output_tokens={MAX_OUTPUT_TOKENS}", flush=True)
+
+        if not on_responses:
+            # `thinking` is the Anthropic spelling; it can survive translation.
+            kwargs.pop("thinking", None)
+            if kwargs.get("reasoning_effort") != "none":
+                kwargs["reasoning_effort"] = "none"
+
+            # This model returns one tool call per turn on this endpoint. Asking
+            # for several is not a slow path, it is a 400 from the engine with no
+            # mention of which parameter caused it.
+            kwargs["parallel_tool_calls"] = False
+
+        # Bedrock serves function tools and nothing else: a request carrying a
+        # built-in tool type is rejected whole, naming the type. codex ships a
+        # `web_search` tool as standard, so every codex request was refused --
+        # and through this proxy the refusal arrived as "Generation failed",
+        # which is what made it take a day to find. Talking to Bedrock directly
+        # says "Tool type 'web_search' is not supported" the first time.
+        kept = [t for t in kwargs["tools"]
+                if not isinstance(t, dict) or t.get("type") in SERVED_TOOL_TYPES]
+        if len(kept) != len(kwargs["tools"]):
+            dropped = [t.get("type") for t in kwargs["tools"] if t not in kept]
+            print(f"dropped unsupported tool types: {dropped}", flush=True)
+            kwargs["tools"] = kept
+        if not kwargs["tools"]:
+            kwargs.pop("tools", None)
+            return kwargs
 
         # Bedrock caps how many tools a request may carry, and answers a
         # request over the cap with the same unhelpful "Generation failed" as

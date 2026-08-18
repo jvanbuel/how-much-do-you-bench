@@ -72,25 +72,21 @@ RUN mkdir -p /root/.pi/agent \
  && python3 -c "import json;json.load(open('/root/.pi/agent/models.json'))"
 
 # codex sandboxes every command with bubblewrap, which needs unprivileged user
-# namespaces that a task container does not have. Without this it fails every
-# command with "bwrap: No permissions to create a new namespace", concludes it
-# cannot see the filesystem, and asks the user for help -- which is what a
-# whole 21-task submission of zeros turned out to be. The container is already
-# the sandbox; a second one inside it buys nothing.
+# namespaces a task container does not have: every command fails with "bwrap: No
+# permissions to create a new namespace", and codex concludes it cannot see the
+# filesystem. The container is already the sandbox.
 #
-# The provider block is not optional either: codex ignores OPENAI_BASE_URL
-# unless a provider declares it, and `wire_api = "chat"` was removed, so the
-# responses API is the only wire left.
-RUN mkdir -p /root/.codex \
+# Written to /tmp/codex-home, not ~/.codex, because harbor's adapter sets
+# CODEX_HOME to that path -- a config in the home directory is never read, which
+# is why this looked fixed in a hand-run container and was not fixed under
+# harbor. The adapter appends its own openai_base_url line to this file, so it
+# has to exist rather than be created by it.
+#
+# The provider block is the adapter's job; what it does not set is the sandbox.
+RUN mkdir -p /tmp/codex-home \
  && printf '%s\n' \
-      'model_provider = "gateway"' \
       'sandbox_mode = "danger-full-access"' \
       'approval_policy = "never"' \
-      '' \
-      '[model_providers.gateway]' \
-      'name = "gateway"' \
-      'base_url = "https://bench-llm.playground.dataminded.cloud/v1"' \
-      'env_key = "OPENAI_API_KEY"' \
-      'wire_api = "responses"' \
-      > /root/.codex/config.toml \
- && grep -q 'danger-full-access' /root/.codex/config.toml
+      > /tmp/codex-home/config.toml \
+ && chmod 777 /tmp/codex-home \
+ && grep -q danger-full-access /tmp/codex-home/config.toml
