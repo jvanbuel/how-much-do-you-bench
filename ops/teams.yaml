@@ -1,0 +1,15 @@
+# The teams competing. One key is minted per name here, and a team's name is
+# also its identity everywhere else: the prefix of its submission ids, a
+# directory on EFS, a path segment in every trace URL.
+#
+# Lower-case letters, digits and dashes, up to 32 characters -- the API rejects
+# anything else, so a name that does not match here fails at submit time rather
+# than at apply time.
+#
+# Adding a name and applying mints that team a key without touching the others.
+# Removing one destroys its key: the parameter goes, and the next `just
+# ops::register-keys` no longer registers it. That is the intended way to revoke.
+teams:
+  - alpha
+  - beta
+  - gamma

@@ -142,6 +142,25 @@ data "aws_iam_policy_document" "api" {
     actions   = ["dynamodb:Scan", "dynamodb:PutItem", "dynamodb:UpdateItem"]
     resources = [aws_dynamodb_table.results.arn]
   }
+
+  statement {
+    # The team keys, which are what /submit authenticates against: the bearer
+    # token says which team is submitting, so the name is no longer something a
+    # caller asserts about itself. Read-only, and scoped to the one path.
+    actions   = ["ssm:GetParametersByPath", "ssm:GetParameter", "ssm:GetParameters"]
+    resources = ["arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/${local.name}/team-keys/*"]
+  }
+
+  statement {
+    # SecureString, so reading one is also a decrypt.
+    actions   = ["kms:Decrypt"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["ssm.${var.region}.amazonaws.com"]
+    }
+  }
 }
 
 resource "aws_iam_policy" "api" {

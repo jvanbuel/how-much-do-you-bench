@@ -21,6 +21,19 @@ just ops::gateway        # a local LiteLLM instead of the deployed one
 `eval` and `calibrate` are the participants' own recipes; everything under
 `ops::` is this half of the repo.
 
+## Behind a TLS-intercepting proxy
+
+Not a participant concern -- they are not on a corporate network -- but this is
+where it was hit during development. The agent's call to the gateway fails with
+a bare connection error that never mentions TLS. Set `CORP_CA_FILE` in `.env`
+and `just eval` mounts the bundle into the task container. The tell:
+
+```
+docker run --rm curlimages/curl -sI https://bench-llm.playground.dataminded.cloud/v1/models
+```
+
+failing where the same request works from your shell.
+
 ## Deploying
 
 ```
@@ -256,9 +269,26 @@ Constraints worth knowing before you author tasks or a harness:
 ## Before the event
 
 ```
-just ops::master-key                 # once, after the first apply
-just ops::team-keys alpha beta ...   # one key per team, printed once
+just ops::master-key         # once, after the first apply
+just ops::register-keys      # tell the gateway to accept the teams' keys
+just ops::team-keys          # print them, to hand out at kickoff
 ```
+
+Teams are `ops/teams.yaml`, and terraform mints one key each into SSM as a
+SecureString under `/de-benchmark/team-keys/`. That is the only place they live:
+nothing is printed once and lost, and reading one needs AWS credentials for this
+account. `register-keys` then tells LiteLLM to accept those exact values --
+terraform cannot, because the admin API is unreachable from outside the VPC on
+purpose, so it runs on a worker through SSM.
+
+The same key is the team's identity at submit time. `/submit` takes it as a
+bearer token and derives the team from it, so a team name is no longer a claim
+the caller makes about itself -- before this, anyone could spend another team's
+five submissions by typing their name. Revoking is deleting the name from
+`teams.yaml` and applying.
+
+Adding a team after the event has started is safe: apply mints only the new key,
+then `register-keys`.
 
 
 - [ ] Author and calibrate the remaining tasks. Half a day each is realistic,
