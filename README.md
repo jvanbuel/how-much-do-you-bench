@@ -12,7 +12,7 @@ You need [Docker](https://docs.docker.com/get-started/), [uv](https://docs.astra
 plus the team key from the kickoff message.
 
 ```
-export GATEWAY_API_KEY=sk-...   # your team key
+export GATEWAY_API_KEY=sk-...   # your team key: reaches the model, and identifies you when you submit
 just eval                       # run a task against your agent
 just view                       # what your agent actually did
 just submit your-team           # when you want it scored
@@ -24,18 +24,6 @@ same tree: one clone, no second repository to keep in step.
 `just eval` mounts your working tree, so there is no commit-push-wait loop: edit,
 run, look, repeat. It talks to the shared gateway, so there is nothing to run
 locally beyond the task container itself.
-
-**Behind a TLS-intercepting proxy** (many corporate networks), the agent's call
-to the gateway fails with a bare connection error that never mentions TLS. Put
-your CA bundle somewhere Docker can share and set `CORP_CA_FILE` in `.env`;
-`just eval` then mounts it into the task container. Check with:
-
-```
-docker run --rm curlimages/curl -sI https://bench-llm.playground.dataminded.cloud/v1/models
-```
-
-A connection failure there, where the same request works from your shell, is
-interception rather than a network problem.
 
 Then read the trajectory. The thing that decides your score is what ends up in
 the context window, and you cannot fix what you have not looked at.

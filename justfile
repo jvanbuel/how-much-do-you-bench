@@ -38,7 +38,8 @@ eval task="incremental-dupes" agent_dir="agent": base
     MOUNTS='[{"type":"bind","source":"{{justfile_directory()}}/{{agent_dir}}","target":"/submission-src","read_only":true}'
     CA=()
     # Behind a TLS-intercepting proxy the agent's HTTPS call fails with a bare
-    # connection error that never mentions TLS. See CORP_CA_FILE in the README.
+    # connection error that never mentions TLS. See ops/README.md; not something a
+    # participant should meet, but the plumbing costs nothing to leave in.
     if [ -f "${CORP_CA_FILE:-}" ]; then
       MOUNTS+=',{"type":"bind","source":"'"$CORP_CA_FILE"'","target":"/etc/ssl/ca.pem","read_only":true}'
       # Python, curl and node each look at a different variable, and an agent
@@ -74,8 +75,13 @@ submit team:
       || { echo "HEAD is not on origin/$BRANCH; run: git push"; exit 1; }
     SHA=$(git rev-parse HEAD)
     URL=$(git remote get-url origin | sed -e 's#^git@github.com:#https://github.com/#' -e 's#\.git$##')
+    KEY="${GATEWAY_API_KEY:-${LITELLM_MASTER_KEY:-}}"
+    [ -n "$KEY" ] || { echo "set GATEWAY_API_KEY to your team key (see the kickoff message)"; exit 1; }
     echo "submitting $SHA to $URL"
+    # The same key that reaches the model. It is what says which team this is:
+    # the name below is a label, and a wrong one is refused rather than believed.
     curl -fsS -X POST {{api_url}}/submit -H 'content-type: application/json' \
+      -H "Authorization: Bearer $KEY" \
       -d "{\"team\":\"{{team}}\",\"repo_url\":\"$URL\",\"commit\":\"$SHA\"}"
     echo
 
