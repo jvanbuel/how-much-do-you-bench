@@ -238,11 +238,17 @@ def run_rollout(job: dict, slug: str, attempt: int) -> dict:
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:1000]}
         finally:
+            # Containers first, key second, and the order is the whole point.
+            # Retiring the key while a container is still alive is how codex
+            # spent twelve rollouts reconnecting into "Invalid proxy server
+            # token ... unable to find token in cache": its process outlived the
+            # rollout, kept calling, and was scored on runs whose credentials
+            # had been pulled out from under it.
+            sweep_containers(slug)
             # A leaked key stays billable and rate-limit-bearing, so retire it
             # even when the rollout blew up.
             with contextlib.suppress(Exception):
                 delete_key(key["key"])
-            sweep_containers(slug)
 
 
 def sweep_containers(slug: str) -> None:
