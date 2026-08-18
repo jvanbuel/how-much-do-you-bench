@@ -128,6 +128,25 @@ def harbor_command(job: dict, slug: str, task_path: Path, config: Path | None, k
     ]
 
 
+def harness_env(key: str) -> dict[str, str]:
+    """The gateway, in every form a harness might look for it.
+
+    Twice over, because Harbor's adapters split on where they read it. `--ae`
+    puts a variable inside the task container, which is where opencode reads it
+    -- but aider and pi resolve the key in *this* process while building the
+    command, and report "No API key found for provider: openai" if it is absent
+    here. Whichever half is missing, the harness starts and makes no model call.
+    """
+    return {
+        "OPENAI_API_KEY": key,
+        "OPENAI_BASE_URL": GATEWAY_URL,
+        "ANTHROPIC_API_KEY": key,
+        "ANTHROPIC_BASE_URL": GATEWAY_URL.removesuffix("/v1"),
+        "GATEWAY_API_KEY": key,
+        "GATEWAY_URL": GATEWAY_URL,
+    }
+
+
 def harbor_run(job: dict, slug: str, task_path: Path, config: Path | None, key: str):
     return subprocess.run(
         harbor_command(job, slug, task_path, config, key),
@@ -135,7 +154,11 @@ def harbor_run(job: dict, slug: str, task_path: Path, config: Path | None, key: 
         text=True,
         # harbor is installed as a uv tool, so the repo is not on its sys.path
         # and the submission adapter would not import.
-        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+        env={
+            **os.environ,
+            "PYTHONPATH": str(Path(__file__).resolve().parent.parent),
+            **harness_env(key),
+        },
     )
 
 
