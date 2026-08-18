@@ -51,16 +51,22 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | b
 #
 # Points at the deployed gateway. Running a local one (`just ops::gateway`) means
 # overriding this file, or pi will talk to the deployed gateway instead.
-RUN mkdir -p /root/.pi/agent && cat > /root/.pi/agent/models.json <<'JSON'
-{
-  "providers": {
-    "gateway": {
-      "baseUrl": "https://bench-llm.playground.dataminded.cloud/v1",
-      "api": "openai-completions",
-      "apiKey": "OPENAI_API_KEY",
-      "authHeader": true,
-      "models": [{ "id": "gemma" }]
-    }
-  }
-}
-JSON
+# printf rather than a heredoc: a Dockerfile heredoc is a BuildKit feature, the
+# workers build without buildx, and the legacy builder writes a zero-byte file
+# and reports success. pi then says `Unknown provider "gateway"` while every log
+# line says the base image is ready.
+RUN mkdir -p /root/.pi/agent \
+ && printf '%s\n' \
+      '{' \
+      '  "providers": {' \
+      '    "gateway": {' \
+      '      "baseUrl": "https://bench-llm.playground.dataminded.cloud/v1",' \
+      '      "api": "openai-completions",' \
+      '      "apiKey": "OPENAI_API_KEY",' \
+      '      "authHeader": true,' \
+      '      "models": [{ "id": "gemma" }]' \
+      '    }' \
+      '  }' \
+      '}' \
+      > /root/.pi/agent/models.json \
+ && python3 -c "import json;json.load(open('/root/.pi/agent/models.json'))"
