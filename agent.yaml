@@ -31,14 +31,10 @@
 # if you were scored on something you did not expect.
 
 agents:
-  # Benchmarked harness: aider. One commit per harness, so each submission is
+  # Benchmarked harness: opencode. One commit per harness, so each submission is
   # graded on exactly the config in the commit it names.
-  - name: aider
-    # Doubled on purpose. Harbor's aider adapter splits provider from model and
-    # passes only the model half to aider, which then has no provider to resolve
-    # and fails with "LLM Provider NOT provided". The first openai/ is eaten by
-    # the adapter; the second is what aider needs to see.
-    model_name: openai/openai/gemma
+  - name: opencode
+    model_name: openai/gemma
     skills: []
     mcp_servers: []
     kwargs: {}
