@@ -164,6 +164,10 @@ canary:
     export OPENAI_BASE_URL="$GW" OPENAI_API_KEY="$KEY"
     export ANTHROPIC_BASE_URL="${GW%/v1}" ANTHROPIC_API_KEY="$KEY"
     export GATEWAY_URL="$GW" GATEWAY_API_KEY="$KEY"
+    # OpenHands reads only these two.
+    export LLM_BASE_URL="$GW" LLM_API_KEY="$KEY"
+    # Read by harbor's swe-agent adapter here, used inside the container.
+    export SWEAGENT_CONFIG=/opt/sweagent-configs/default_backticks.yaml
     export CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1
     MOUNTS='[{"type":"bind","source":"'$(pwd)'/agent","target":"/submission-src","read_only":true}]'
     PYTHONPATH=$(pwd)/ops harbor run \
@@ -173,6 +177,7 @@ canary:
       --ae GATEWAY_URL="$GW" --ae GATEWAY_API_KEY="$KEY" \
       --ae OPENAI_BASE_URL="$GW" --ae OPENAI_API_KEY="$KEY" \
       --ae ANTHROPIC_BASE_URL="${GW%/v1}" --ae ANTHROPIC_API_KEY="$KEY" \
+      --ae LLM_BASE_URL="$GW" --ae LLM_API_KEY="$KEY" \
       --ae CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1 \
       || true
     python3 - <<'EOF'

@@ -6,8 +6,6 @@
 # harness gets supported, or a spelling changes, this file is where the canary
 # learns about it -- keep it in step with the doc.
 agents:
-  - name: aider
-    model_name: openai/openai/gemma
   - name: opencode
     model_name: gemma
   - name: codex
@@ -16,8 +14,14 @@ agents:
     model_name: gateway/gemma
   - name: claude-code
     model_name: gemma
+  # LiteLLM-style spellings: these three resolve the key and the base URL from
+  # the provider prefix, so `openai/` is what points them at the gateway.
+  - name: mini-swe-agent
+    model_name: openai/gemma
+  - name: swe-agent
+    model_name: openai/gemma
   # The baseline `agent/` entrypoint, run exactly as `just eval` runs it. This
   # is the one that exercises the GATEWAY_* env plumbing end to end.
-  - name: submission
+  - name: custom
     import_path: harness.submission_agent:Submission
     model_name: gemma
