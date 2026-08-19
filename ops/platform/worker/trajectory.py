@@ -134,7 +134,7 @@ def _demo() -> None:
         "tools": [{"type": "function", "function": {"name": "bash"}}],
     }
 
-    doc = build(conversation, agent="submission", version="8c1f0d8", model="gemma")
+    doc = build(conversation, agent="custom", version="8c1f0d8", model="gemma")
 
     assert [s["source"] for s in doc["steps"]] == ["system", "user", "agent"]
     # The tool result folded into the call's step rather than becoming its own.

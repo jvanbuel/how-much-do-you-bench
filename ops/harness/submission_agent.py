@@ -29,7 +29,7 @@ class Submission(BaseInstalledAgent):
     @staticmethod
     @override
     def name() -> str:
-        return "submission"
+        return "custom"
 
     @override
     def version(self) -> str | None:

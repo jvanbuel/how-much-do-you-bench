@@ -229,7 +229,7 @@ def build(root: Path, model: str) -> tuple[Path, str]:
     entry = _agent(agents[0], root, model)
     graded = root / ".graded-agent.yaml"
     graded.write_text(yaml.safe_dump({"agents": [entry]}, sort_keys=False))
-    return graded, entry.get("name") or "submission"
+    return graded, entry.get("name") or "custom"
 
 
 def resolve(job: dict, workdir: Path, model: str) -> tuple[Path | None, str, str | None]:
@@ -245,9 +245,9 @@ def resolve(job: dict, workdir: Path, model: str) -> tuple[Path | None, str, str
         config, agent = build(workdir, model)
         return config, agent, None
     except ConfigError as exc:
-        return None, "submission", f"agent.yaml ignored: {exc}"
+        return None, "custom", f"agent.yaml ignored: {exc}"
     except Exception as exc:  # noqa: BLE001
-        return None, "submission", f"agent.yaml ignored: {type(exc).__name__}: {exc}"
+        return None, "custom", f"agent.yaml ignored: {type(exc).__name__}: {exc}"
 
 
 def _demo() -> None:
@@ -295,11 +295,11 @@ def _demo() -> None:
         # The template pairs the adapter with a name to label it, which is what
         # a team gets by uncommenting the block in agent.yaml. Both is fine.
         paired = _agent(
-            {"name": "submission", "import_path": SUBMISSION_ADAPTER, "model_name": "gemma"},
+            {"name": "custom", "import_path": SUBMISSION_ADAPTER, "model_name": "gemma"},
             root,
             "gemma",
         )
-        assert paired["import_path"] == SUBMISSION_ADAPTER and paired["name"] == "submission"
+        assert paired["import_path"] == SUBMISSION_ADAPTER and paired["name"] == "custom"
 
         # A whole file, end to end.
         (root / "agent.yaml").write_text(
