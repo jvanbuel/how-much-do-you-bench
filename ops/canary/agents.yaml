@@ -7,7 +7,7 @@
 # learns about it -- keep it in step with the doc.
 agents:
   - name: opencode
-    model_name: gemma
+    model_name: openai/gemma
   - name: codex
     model_name: gemma
   - name: pi
