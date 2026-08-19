@@ -16,11 +16,23 @@ api_url := env_var_or_default("API_URL", "https://bench.playground.dataminded.cl
 eval task="incremental-dupes" agent_dir="agent": base
     #!/usr/bin/env bash
     set -euo pipefail
-    # Harbor will not resume a job directory whose config changed, and this is
-    # the iterate-and-look loop, so it has to be re-runnable.
-    rm -rf jobs/local
-    KEY="${GATEWAY_API_KEY:-${LITELLM_MASTER_KEY:-}}"
+    KEY="${GATEWAY_API_KEY:-}"
     [ -n "$KEY" ] || { echo "set GATEWAY_API_KEY to your team key (see the kickoff message)"; exit 1; }
+    # One request before the rollout, because the failure it catches is silent
+    # and expensive: a key the gateway does not know 401s every turn, the
+    # harness retries five times per turn, and the run ends at the agent
+    # timeout with an empty trajectory that looks like a broken harness or a
+    # confused model. Ten minutes to learn what this says in two seconds.
+    #
+    # Re-read a stale key with: just ops::team-keys <your-team>
+    CODE=$(curl -s -o /dev/null -w '%{http_code}' "${GATEWAY_URL:-{{gateway_url}}}/models" \
+      -H "authorization: Bearer $KEY")
+    [ "$CODE" = 200 ] || { echo "gateway rejected your key (HTTP $CODE); re-read it: just ops::team-keys <team>"; exit 1; }
+    # Harbor will not resume a job directory whose config changed, and this is
+    # the iterate-and-look loop, so it has to be re-runnable. After the key
+    # check, not before: a run that cannot start should not take the previous
+    # run's trajectory with it, which is the evidence you are iterating on.
+    rm -rf jobs/local
     # An Anthropic-speaking harness reads these; ours reads GATEWAY_*. Passing
     # both lets agent.yaml decide without this command knowing which.
     #
@@ -34,6 +46,10 @@ eval task="incremental-dupes" agent_dir="agent": base
     # translation. Every agent here calls tools, so adaptive thinking is off.
     export CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1
     export OPENAI_BASE_URL="$GW"
+    # OpenHands reads neither the OPENAI_ nor the ANTHROPIC_ pair.
+    export LLM_BASE_URL="$GW" LLM_API_KEY="$KEY"
+    # Read by harbor's swe-agent adapter here, used inside the container.
+    export SWEAGENT_CONFIG=/opt/sweagent-configs/default_backticks.yaml
 
     MOUNTS='[{"type":"bind","source":"{{justfile_directory()}}/{{agent_dir}}","target":"/submission-src","read_only":true}'
 
@@ -44,7 +60,8 @@ eval task="incremental-dupes" agent_dir="agent": base
       --ae SUBMISSION_LOCAL_DIR=/submission-src \
       --ae GATEWAY_URL="$GW" \
       --ae GATEWAY_API_KEY="$KEY" --ae ANTHROPIC_API_KEY="$KEY" \
-      --ae OPENAI_API_KEY="$KEY"
+      --ae OPENAI_API_KEY="$KEY" \
+      --ae LLM_BASE_URL="$GW" --ae LLM_API_KEY="$KEY"
     # These do sit in argv, where any local process can read them while the
     # rollout runs. Left as they are: --ae is the only way to put a variable in
     # the agent's container (--env-file loads harbor's own environment, not the
@@ -70,7 +87,7 @@ submit team:
       || { echo "this commit is not on the remote; run: git push"; exit 1; }
     SHA=$(git rev-parse HEAD)
     URL=$(git remote get-url origin | sed -e 's#^git@github.com:#https://github.com/#' -e 's#\.git$##')
-    KEY="${GATEWAY_API_KEY:-${LITELLM_MASTER_KEY:-}}"
+    KEY="${GATEWAY_API_KEY:-}"
     [ -n "$KEY" ] || { echo "set GATEWAY_API_KEY to your team key (see the kickoff message)"; exit 1; }
     echo "submitting $SHA to $URL"
     # The same key that reaches the model. It is what says which team this is:
