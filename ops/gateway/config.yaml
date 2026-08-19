@@ -17,10 +17,13 @@ model_list:
       # useless. Figures are Bedrock's published rates for google.gemma-4-31b.
       input_cost_per_token: 0.00000014
       output_cost_per_token: 0.00000040
-      # Bedrock turns reasoning on by default for this model and then refuses
-      # function tools unless reasoning_effort is explicitly "none". Verified
-      # against the endpoint directly: tools alone 400, tools plus this 200.
-      reasoning_effort: "none"
+      # Reasoning is the harness's choice, not ours. This used to pin
+      # reasoning_effort to "none" because the endpoint was measured refusing
+      # function tools without it -- re-measured 2026-08-19 and that is no
+      # longer true: tools with no reasoning_effort, with "none", and with
+      # "high" all return 200, and "high" returns reasoning content and a
+      # correct tool call together.
+      #
       # LiteLLM has no capability map for this model, so it assumes
       # reasoning_effort is unsupported and would otherwise strip it.
       allowed_openai_params: ["reasoning_effort"]
@@ -29,9 +32,10 @@ model_list:
       # harnesses send one as a matter of course -- Claude Code always does, and
       # the Anthropic /v1/messages format requires it -- so they are stripped
       # here rather than every harness needing to know.
-      # thinking is Claude Code's interleaved-thinking request; LiteLLM maps it
-      # onto reasoning_effort, which Bedrock then refuses alongside tools.
-      additional_drop_params: ["max_tokens", "max_completion_tokens", "thinking"]
+      # `thinking` is Claude Code's interleaved-thinking request, which LiteLLM
+      # maps onto reasoning_effort. It used to be dropped here, on the same
+      # mistaken premise as the pin above; it travels now.
+      additional_drop_params: ["max_tokens", "max_completion_tokens"]
 
   # Swapping to self-hosted Gemma on Scaleway is this block and nothing else.
   # - model_name: gemma
@@ -41,13 +45,12 @@ model_list:
   #     api_key: os.environ/SCALEWAY_API_KEY
 
 litellm_settings:
-  # Strips the reasoning request from tool-calling calls. See hooks.py: this
-  # model refuses tools and reasoning together on chat completions, and the
-  # combination arrives via translation, too late for model config to prevent.
+  # Drops schema keywords and tool types this endpoint refuses, and fills in the
+  # output limit the responses route needs. See hooks.py.
   callbacks: ["hooks.proxy_handler_instance"]
   # On, so a team sending a parameter this model does not support gets their
-  # request served rather than a 400. What it must not strip is the
-  # reasoning_effort above, which is why that one is allow-listed on the model.
+  # request served rather than a 400. What it must not strip is
+  # reasoning_effort, which is why that one is allow-listed on the model.
   drop_params: true
 
 general_settings:
