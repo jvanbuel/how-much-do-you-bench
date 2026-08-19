@@ -41,9 +41,13 @@ keeping for any harness that navigates by reading.
 
 ### opencode
 
-- `model_name: gemma`, reads `OPENAI_BASE_URL`/`OPENAI_API_KEY` inside the task
-  container.
-- No known quirks beyond the gateway-absorbed ones.
+- `model_name: openai/gemma`, reads `OPENAI_BASE_URL`/`OPENAI_API_KEY` inside
+  the task container.
+- The prefix is not optional and was not always required: harbor's adapter now
+  raises `Model name must be in the format provider/model_name` before its
+  first model call (`opencode.py:481`). A plain `gemma` had been correct, so
+  this broke on a harbor upgrade rather than on anything here -- worth checking
+  after any harbor bump, for every harness listed in this file.
 
 ### codex
 

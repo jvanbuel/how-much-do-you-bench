@@ -80,8 +80,12 @@ agents:
   #   kwargs:
   #     max_turns: 40
 
-  # One harness needs its model_name spelled a particular way, because Harbor's
-  # adapter rewrites it on the way through:
+  # Two harnesses need their model_name spelled a particular way, because
+  # Harbor's adapter rewrites or validates it on the way through:
+  #
+  #   opencode  ->  openai/gemma    the adapter refuses a name with no provider
+  #                                 prefix, and the refusal is a ValueError
+  #                                 before the first model call
   #
   #   pi  ->  gateway/gemma   pi ignores OPENAI_BASE_URL entirely, so the base
   #                           image gives it a `gateway` provider in
