@@ -47,18 +47,20 @@ agents:
   # Your own harness: the `agent/` directory in this repo, run as
   # `uv run agent --instruction ...`. Uncomment to grade your code instead.
   #
-  # - name: submission
+  # - name: custom
   #   import_path: harness.submission_agent:Submission
   #   model_name: gemma
   #   skills: []
   #   mcp_servers: []
   #   kwargs: {}
 
-  # Claude Code reaches the model -- the gateway trims its tool list to the 18
-  # this model accepts, of the 28 it sends -- but it does not finish. Measured
-  # on a one-line bug fix: 168 turns, 1.5M input tokens, $7.93, and the bug still
-  # there at the end. It reads and re-plans without acting. Try it if you want to
-  # see that for yourself; do not plan your afternoon around it.
+  # Claude Code works against this model as of the 2026-08-19 gateway. Until
+  # then every request it sent was refused whole: its tool schemas carry
+  # `propertyNames`, which this endpoint rejects, and the refusal arrived as an
+  # opaque "Generation failed" on turn one. The gateway now strips that keyword
+  # (ops/gateway/hooks.py), and it passes the canary. The earlier measurement --
+  # 168 turns, 1.5M input tokens, $7.93 and the bug still there -- was a harness
+  # arguing with a 400, so treat it as unmeasured rather than as slow.
   #
   # - name: claude-code
   #   model_name: gemma
@@ -78,16 +80,17 @@ agents:
   #   kwargs:
   #     max_turns: 40
 
-  # Two harnesses need their model_name spelled a particular way, because
-  # Harbor's adapter rewrites it on the way through:
+  # One harness needs its model_name spelled a particular way, because Harbor's
+  # adapter rewrites it on the way through:
   #
-  #   aider  ->  openai/openai/gemma   the adapter eats the first prefix, and
-  #                                    aider needs one of its own
-  #   pi     ->  gateway/gemma         pi ignores OPENAI_BASE_URL entirely, so
-  #                                    the base image gives it a `gateway`
-  #                                    provider in ~/.pi/agent/models.json
+  #   pi  ->  gateway/gemma   pi ignores OPENAI_BASE_URL entirely, so the base
+  #                           image gives it a `gateway` provider in
+  #                           ~/.pi/agent/models.json. That file points at the
+  #                           deployed gateway, so pointing pi at a local one
+  #                           means overriding it -- otherwise pi talks to the
+  #                           deployed gateway and 401s on your local key.
   #
-  # Measured on the full suite: aider 11/21, opencode 8/21, codex 4/21.
+  # Measured on the full suite: opencode 8/21, codex 4/21.
   #
   # Everything known about each harness against this model -- spellings, env
   # vars, quirks, what the gateway silently does to requests -- is collected in

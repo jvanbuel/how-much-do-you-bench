@@ -17,16 +17,19 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          curl ca-certificates git unzip jq \
+         build-essential tmux procps \
     && rm -rf /var/lib/apt/lists/*
 
 # uv, for the task's own dependencies and for the pip-installed harnesses.
 COPY --from=ghcr.io/astral-sh/uv:0.9.7 /uv /uvx /usr/local/bin/
 
 # The harnesses. Trimmed to those that can talk to an OpenAI-compatible
-# endpoint, which is what the gateway serves: claude-code needs the Anthropic
-# API and mostly fails against this model, and gemini-cli and qwen-code target
-# their own providers. Harbor installs any other harness on demand -- this only
-# decides which ones are already warm.
+# endpoint, which is what the gateway serves: gemini-cli and qwen-code target
+# their own providers, and copilot-cli authenticates to GitHub rather than to a
+# base URL, so none of the three can be pointed at this model at all.
+# claude-code speaks the Anthropic API, which the gateway also serves, and
+# harbor installs it on demand. Harbor installs any other harness on demand too
+# -- this only decides which ones are already warm.
 #
 # Versions track harbor.agents.installed.node_install, so `nvm install 22` and
 # `npm i -g` become checks rather than downloads.
@@ -36,7 +39,6 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | b
     && npm i -g opencode-ai@latest @openai/codex @mariozechner/pi-coding-agent \
     && npm cache clean --force \
     && uv python install 3.12 \
-    && uv tool install aider-chat \
     && uv cache prune --ci || true
 
 # pi cannot be pointed at an OpenAI-compatible endpoint by environment variable.
@@ -90,3 +92,63 @@ RUN mkdir -p /tmp/codex-home \
       > /tmp/codex-home/config.toml \
  && chmod 777 /tmp/codex-home \
  && grep -q danger-full-access /tmp/codex-home/config.toml
+
+# The duckdb CLI. Three tasks ship a duckdb database and pip-install the python
+# library, but `duckdb file.db ".schema"` is the first thing every harness
+# reaches for -- and command-not-found there reads as a broken environment
+# rather than a missing tool: codex spotted both bugs in duckdb-nulls, hit this,
+# and then looped narrating instead of running anything else.
+#
+# duckdb-cli, not duckdb: the PyPI `duckdb` package provides no executable.
+# 1.4.4 rather than the tasks' 1.4.1 -- same storage format, and the CLI is not
+# published at 1.4.1.
+RUN uv tool install duckdb-cli==1.4.4 \
+ && uv cache prune --ci || true
+RUN duckdb -c "select 42" | grep -q 42
+
+
+# mini-swe-agent, installed exactly as harbor's adapter installs it, so its own
+# install step finds the work already done instead of repeating it.
+#
+# `--with litellm[proxy]` is harbor's spelling, not ours: mini-swe-agent resolves
+# the gateway through litellm, and without the extra it starts and cannot route.
+RUN uv tool install mini-swe-agent --with 'litellm[proxy]' \
+ && mini-swe-agent --help > /dev/null
+
+# openhands is not installed, because it cannot currently be run at all. Harbor
+# verifies its install with `python -m openhands.core.main --version`, and that
+# module is gone from openhands-ai 1.x (the package is `openhands.sdk` now);
+# every 0.x release the adapter can still drive -- 0.47, 0.48, 0.49 -- fails the
+# same command with `No module named 'deprecated'`, a dependency those releases
+# do not declare. Installing `Deprecated` alongside fixes it, which the adapter
+# has no way to express. Measured 2026-08-19.
+
+# swe-agent is deliberately absent: it runs `rm -rf /opt/sweagent-repo` and
+# re-clones on every rollout, so anything baked for it is deleted before use.
+#
+# What it does need is /testbed. Harbor's adapter picks the repository to work on
+# with, literally:
+#
+#   $(if [ -d /testbed ]; then echo '--env.repo.type=preexisting --env.repo.repo_name=/testbed';
+#     else echo '--env.repo.path=$(pwd)'; fi)
+#
+# The `$(pwd)` in the else branch is inside single quotes, so it is echoed rather
+# than expanded, and command substitution does not re-evaluate its own output --
+# swe-agent is handed the four characters `$(pwd)` as a path and dies in
+# check_valid_repo on `/app/$(pwd)`. The if branch has no such bug, so the fix is
+# to take it: a symlink is enough for `-d`, and `preexisting` works in place, so
+# swe-agent edits /app and the verifier reads what it wrote.
+RUN ln -s /app /testbed
+
+# swe-agent needs SWEAGENT_CONFIG=/opt/sweagent-configs/default_backticks.yaml,
+# set by the worker, `just eval` and the canary. Nothing to install for it here;
+# the note is here because this is where the other harness config files live.
+#
+# Why: swe-agent asks litellm whether the model supports function calling, gets
+# False for a name litellm has never heard of, warns, and then parses the reply
+# as a tool call anyway -- every rollout submitted an empty patch. Its own advice
+# is `parse_function='thought_action'`, and setting only that renders an empty
+# user message: the parser and the prompt templates are a matched pair, and
+# default.yaml's templates are written for the function-calling path.
+# default_backticks.yaml is upstream's matched pair for prose commands, staged by
+# harbor's own install. Measured both ways, 2026-08-19.

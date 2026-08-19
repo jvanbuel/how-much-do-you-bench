@@ -32,18 +32,12 @@ only on `/v1/responses`, no websocket/realtime routes.
 
 ## Per harness
 
-Suite scores from the calibration benches (21 tasks): **aider 11/21,
-opencode 8/21, codex 4/21**.
-
-### aider
-
-- `model_name: openai/openai/gemma` — the only spelling that works. Harbor's
-  adapter eats the first prefix, and aider itself needs one to pick a provider.
-- Reads `OPENAI_BASE_URL`/`OPENAI_API_KEY`, resolved in the *worker's* process
-  while the command is built, not (only) in the task container.
-- Navigates by repo map, and the repo map comes from git: a workspace without a
-  git repo makes aider ask the user to paste code. Every task image commits its
-  fixtures for this reason.
+Suite scores from the calibration benches (21 tasks): **opencode 8/21,
+codex 4/21**. aider scored 11/21 on the same benches and is no longer
+supported: it edits files from its repo map and cannot run a command, so it
+answers a data-engineering task without ever looking at the data. Task images
+still commit their fixtures, which is what made that repo map work and is worth
+keeping for any harness that navigates by reading.
 
 ### opencode
 
@@ -80,7 +74,7 @@ opencode 8/21, codex 4/21**.
   BuildKit feature, and the legacy builder writes a zero-byte file and reports
   success — pi then says `Unknown provider "gateway"` while every log says the
   image is ready.
-- Like aider, resolves its key in the worker's process, not the container.
+- Resolves its key in the worker's process, not the container.
 
 ### claude-code
 
@@ -93,8 +87,41 @@ opencode 8/21, codex 4/21**.
 - With the trim in place it runs (measured: 42 turns, 360k input tokens, every
   request 200), but it is the most fragile harness against this model. Try it;
   do not plan your afternoon around it.
+- Both of those readings were wrong, and measuring settled it on 2026-08-19.
+  It was not planning instead of acting: every request was refused whole. Its
+  schemas carry `propertyNames`, which this endpoint rejects at any depth, and
+  the refusal arrives as an opaque `Generation failed` -- so the harness argued
+  with a 400 for 168 turns. The gateway now strips that keyword and Claude Code
+  passes the canary. Treat the old numbers as unmeasured.
+- Routing it through a different gateway does not help: a gateway cannot route
+  around a schema the model's endpoint refuses. Measured against Bifrost the
+  same day -- identical request, identical refusal.
 
-### submission (the `agent/` baseline)
+### mini-swe-agent, swe-agent
+
+- `model_name: openai/gemma` for both. They resolve provider, key and base URL
+  from the LiteLLM-style prefix, so the `openai/` part is what points them at
+  the gateway rather than at OpenAI.
+- Both read `OPENAI_BASE_URL`. mini-swe-agent is pre-installed in the base
+  image with harbor's own `--with 'litellm[proxy]'` extra, without which it
+  starts and cannot route.
+- swe-agent is deliberately not pre-installed: it does `rm -rf
+  /opt/sweagent-repo` and re-clones on every run, so a baked copy is deleted
+  before it is used. Expect its rollouts to start slower.
+
+### openhands (not supported)
+
+Wanted, and currently unusable through harbor. Its adapter verifies the install
+with `python -m openhands.core.main --version`. That module is gone from
+`openhands-ai` 1.x -- the package is `openhands.sdk` now -- and 0.47, 0.48 and
+0.49 all fail the same command with `No module named 'deprecated'`, a dependency
+those releases do not declare. `uv pip install openhands-ai==0.49.0 Deprecated`
+works, which the adapter has no way to express. The worker, `just eval` and the
+canary do set `LLM_BASE_URL`/`LLM_API_KEY` (the only pair openhands reads), so
+the day the adapter or the package moves, only the agents.yaml entry is
+missing.
+
+### custom (the `agent/` baseline)
 
 - `import_path: harness.submission_agent:Submission`, `model_name: gemma`.
 - Reads `GATEWAY_URL`/`GATEWAY_API_KEY`. Runs in `/app` (the task workspace)
@@ -105,8 +132,8 @@ opencode 8/21, codex 4/21**.
 ## Environment a rollout gets
 
 The worker passes the gateway in every spelling anyone reads, both into the
-task container (`--ae`) and into the harbor process itself (aider and pi
-resolve keys there): `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`
+task container (`--ae`) and into the harbor process itself (pi resolves its
+key there): `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`
 (no `/v1`), `ANTHROPIC_API_KEY`, `GATEWAY_URL`, `GATEWAY_API_KEY`. `just eval`
 and `just ops::canary` set the same, which is what keeps local runs and graded
 runs the same experiment.

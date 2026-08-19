@@ -16,7 +16,7 @@ CMD ["sleep", "infinity"]
 
 ## Everything starts FROM the shared base
 
-`tasks/base/Dockerfile` carries Debian, node, the harnesses, uv and aider -- about
+`tasks/base/Dockerfile` carries Debian, node, the harnesses, uv and duckdb -- about
 2.5GB. It is tagged `hmdyb-task-base:1` in the local daemon and never pushed
 anywhere: `just base` builds it (and `just eval` and `just calibrate` depend on
 that recipe), and the worker builds it at startup from its own copy of this
@@ -76,7 +76,6 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.7 /uv /uvx /usr/local/bin/
 ENV UV_LINK_MODE=copy
 ENV PATH="/root/.local/bin:$PATH"
 RUN uv python install 3.12 \
-    && uv tool install aider-chat \
     && uv cache prune --ci || true
 ```
 
@@ -87,5 +86,5 @@ help is already above -- it checks for `uv` before fetching it, and
 
 `uv tool install` puts binaries in `/root/.local/bin`, hence the PATH line. Note
 that a **login** shell (`bash -lc`) re-sources `/etc/profile` and discards the
-image's PATH, so `command -v aider` can fail there while working fine for the
+image's PATH, so `command -v duckdb` can fail there while working fine for the
 harness -- do not chase that as a missing install.
