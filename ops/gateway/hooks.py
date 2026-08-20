@@ -28,7 +28,7 @@ Reasoning is still off by default, but in one place now rather than two --
 constraint.
 """
 
-import re
+import uuid
 from typing import Any
 
 from litellm.integrations.custom_logger import CustomLogger
@@ -63,6 +63,35 @@ SERVED_TOOL_TYPES = (None, "function", "mcp", "custom", "namespace", "tool_searc
 # Dropped rather than rewritten: each of these only narrows what the model may
 # send, so losing them costs validation the harness redoes on its own side.
 UNSERVED_SCHEMA_KEYWORDS = ("propertyNames", "not", "if", "then", "else")
+
+
+def _unique_call_id() -> str:
+    """A tool call id no other call in the conversation will have."""
+    return f"call_{uuid.uuid4().hex[:16]}"
+
+
+def _rewrite_tool_call_ids(message: Any) -> int:
+    """Give every tool call on a message its own id. Returns how many changed.
+
+    The engine numbers tool calls by their position in the response, so a model
+    that makes one call per turn returns `call_0` every single turn. Nothing
+    downstream can tell those apart.
+    """
+    calls = getattr(message, "tool_calls", None)
+    if not calls and isinstance(message, dict):
+        calls = message.get("tool_calls")
+    if not calls:
+        return 0
+    n = 0
+    for call in calls:
+        if isinstance(call, dict):
+            if call.get("id") is not None:
+                call["id"] = _unique_call_id()
+                n += 1
+        elif getattr(call, "id", None) is not None:
+            call.id = _unique_call_id()
+            n += 1
+    return n
 
 
 def _strip_unserved_schema(node: Any) -> None:
@@ -105,6 +134,28 @@ class ServedRequestsOnly(CustomLogger):
             # mention of which parameter caused it.
             kwargs["parallel_tool_calls"] = False
 
+        # Thinking and tools together, on the Anthropic route, produce turns
+        # that are thinking and nothing else: no tool call, no text. The
+        # harness has nothing to act on, records "(no content)" and asks again,
+        # and the rollout spends its whole budget that way.
+        #
+        # Measured 2026-08-20 by capturing what Claude Code actually sends: one
+        # request carried 103 thinking blocks, 105 "(no content)" turns and a
+        # single tool call. It asks for `{"thinking": {"type": "adaptive"}}`
+        # and `output_config.effort = "high"`, and sends them whatever
+        # CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING is set to -- that variable does
+        # not reach this request.
+        #
+        # This used to be dropped in config.yaml and I removed it earlier the
+        # same day, having measured tools and reasoning coexisting happily. That
+        # measurement was on chat completions with `reasoning_effort`, which is
+        # a different route and a different parameter, and it did not test the
+        # one that breaks. The canary did not catch the regression either: its
+        # task is answerable in a single turn, so it never needs a second one.
+        for param in ("thinking", "output_config"):
+            if kwargs.pop(param, None) is not None:
+                print(f"dropped {param} from a tool-calling request", flush=True)
+
         # Bedrock serves function tools and nothing else: a request carrying a
         # built-in tool type is rejected whole, naming the type. codex ships a
         # `web_search` tool as standard, so every codex request was refused --
@@ -131,6 +182,51 @@ class ServedRequestsOnly(CustomLogger):
                 _strip_unserved_schema(tool)
         return kwargs
 
+    async def async_post_call_success_hook(
+        self, data: dict, user_api_key_dict: Any, response: Any
+    ) -> Any:
+        """Make every tool call id unique before the harness sees it.
+
+        The engine ids tool calls by position within one response, so a model
+        that makes a single call per turn hands back `call_0` on every turn of
+        the conversation. The OpenAI-shaped harnesses survive it, because a
+        tool result there follows the call it belongs to and position is enough
+        to pair them. The Anthropic message format threads strictly by id, so a
+        conversation where every `tool_use` and every `tool_result` says
+        `call_0` cannot be threaded at all -- and the results are dropped.
+
+        That is what made claude-code unusable: it read a file, the result was
+        discarded on the way back in, and it read the same file again, forty
+        times, until the agent timeout. It reads as a model too weak to hold a
+        plan and it is nothing of the sort. Measured 2026-08-20: 76 tool calls
+        in one rollout, every one of them `call_0`.
+        """
+        changed = 0
+        for choice in getattr(response, "choices", None) or []:
+            message = getattr(choice, "message", None)
+            if message is not None:
+                changed += _rewrite_tool_call_ids(message)
+        if changed:
+            print(f"made {changed} tool call id(s) unique", flush=True)
+        return response
+
+    async def async_post_call_streaming_iterator_hook(
+        self, user_api_key_dict: Any, response: Any, request_data: dict
+    ) -> Any:
+        """The same, for a streamed response.
+
+        An id arrives once, on the first delta of each call, and later chunks
+        for that call carry only the arguments -- so rewriting whenever an id
+        is present is enough, and there is nothing to keep between chunks.
+        """
+        async for chunk in response:
+            for choice in getattr(chunk, "choices", None) or []:
+                delta = getattr(choice, "delta", None)
+                if delta is not None:
+                    _rewrite_tool_call_ids(delta)
+            yield chunk
+
+
 proxy_handler_instance = ServedRequestsOnly()
 
 
@@ -155,4 +251,23 @@ if __name__ == "__main__":
         "properties": {"a": {"type": "object"}, "b": {"type": "array", "items": {}}},
         "oneOf": [{"required": ["a"]}],
     }, schema
+    # The other piece with a shape it can get wrong: ids have to change, and
+    # they have to differ from each other.
+    class _Call:
+        def __init__(self, id): self.id = id
+
+    class _Msg:
+        def __init__(self): self.tool_calls = [_Call("call_0"), _Call("call_0")]
+
+    m = _Msg()
+    assert _rewrite_tool_call_ids(m) == 2
+    assert m.tool_calls[0].id != m.tool_calls[1].id, "ids collided"
+    assert all(c.id != "call_0" for c in m.tool_calls)
+
+    d = {"tool_calls": [{"id": "call_0", "function": {"name": "bash"}}]}
+    assert _rewrite_tool_call_ids(d) == 1
+    assert d["tool_calls"][0]["id"] != "call_0"
+    assert _rewrite_tool_call_ids({"tool_calls": []}) == 0
+    assert _rewrite_tool_call_ids({}) == 0
+
     print("ok")

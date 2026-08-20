@@ -119,25 +119,55 @@ keeping for any harness that navigates by reading.
   cap plus the verifier, on every single task. It does not finish and get the
   answer wrong; it never stops, and the timeout ends it.
 
-  **The cause is Claude Code's own de-duplication guard.** Reproduced locally
-  on `harbor-analyze-trajectories`: one `ls`, then the same `Read` of the same
-  file forty times. The first read returns the file. Every one after it returns
+  **The cause is two bugs in this gateway, and neither is the harness.**
+  Found by putting a logging proxy between Claude Code and the gateway and
+  reading the wire, after three wrong theories drawn from the agent log.
 
-      Wasted call -- file unchanged since your last Read.
-      Refer to that earlier tool_result instead.
+  *One: `thinking` and `output_config` on a tool-calling request.* The model
+  answers with reasoning and no tool call, so the harness has nothing to act
+  on, writes `(no content)` and asks again -- one captured request carried 103
+  thinking blocks, 105 `(no content)` turns and a single tool call. Claude Code
+  sends `{"thinking": {"type": "adaptive"}}` and `output_config.effort: high`
+  whatever `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` is set to; that variable
+  never reaches the request. `output_config` is also
+  [an open LiteLLM bug](https://github.com/BerriAI/litellm/issues/22963). Both
+  are dropped from tool-calling requests in hooks.py now.
 
-  which Claude Code generates itself, to stop a capable model wasting turns.
-  Gemma does not act on it. It reads the message as a failed call and reissues
-  the identical read, gets scolded again, and repeats until the timeout. By
-  turn 24 it is leaking fragments of its own reasoning into the arguments --
-  `file_path: "analyze_trajectory.py destroy"`.
+  This one was self-inflicted: the gateway used to drop them, and it stopped on
+  2026-08-19 because tools and `reasoning_effort` were measured coexisting
+  happily. That measurement was on chat completions with a different parameter
+  and never touched the route that breaks.
 
-  Two things follow. **The gateway cannot fix this**: the guard is produced
-  inside the harness and the repeated reads never reach the gateway, which sees
-  forty ordinary successful requests and logs no errors at all. And **the
-  canary cannot catch it**: its task is small enough to finish before anything
-  needs a second look, which is why claude-code passes the canary and fails
-  every real task.
+  *Two: every tool call comes back with the id `call_0`.* It is the call's
+  index within a response and this model makes one call per turn, so it is
+  index 0 forever -- 76 of them in one rollout. Claude Code aborts a `tool_use`
+  whose id it has already processed, which is what `[Tool use interrupted]`
+  means in its transcript: the first call runs and every later one is discarded
+  as a replay. The id comes from the endpoint, not from LiteLLM, whose source
+  contains no `call_` prefix at all.
+
+  With unique ids the harness works. Measured 2026-08-20 on
+  `harbor-analyze-trajectories`: `ls -R`, read the stub, read two doc pages,
+  read a sample trajectory, edit the implementation, write a test, stop --
+  eight turns, `stop_reason: end_turn`, 13.8s of API time, no interruptions.
+  Against 40-plus turns and 2.45M tokens before.
+
+  **The id fix has nowhere to live yet.** LiteLLM's post-call hooks do not run
+  on `/v1/messages`: over forty minutes the gateway logged 352 pre-call hook
+  events and 3 post-call ones, and those three were direct calls to
+  `/chat/completions`. The rewrite is deployed for chat completions and proven
+  in a proxy for the Anthropic route; putting it in production needs either a
+  sidecar or an extension point nobody has found.
+  [PR #23507](https://github.com/BerriAI/litellm/pull/23507) is titled exactly
+  for this bug and was closed unmerged against a different provider.
+
+  **Read the 0/17 on the board as a measurement of this gateway.** It is not a
+  measurement of the harness, and claude-code should be re-run once the ids are
+  unique on the route it uses.
+
+  Note what could not have caught this. The canary answers in a single turn, so
+  it never makes a second tool call -- which is where every one of these
+  failures begins. It proves a harness can reach the model and nothing more.
 
   A team that picks this harness spends its budget getting nothing, with no
   signal that the harness rather than its own context engineering is at fault.
