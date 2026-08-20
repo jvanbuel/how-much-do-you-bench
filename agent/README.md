@@ -122,7 +122,7 @@ From the repo root:
 
 ```
 just eval                       # one task, against your working tree
-just eval a-scored-task      # a specific task
+just eval log-rotation          # a specific sample task
 just view                       # what your agent actually did
 ```
 

@@ -51,7 +51,7 @@ eval task="incremental-dupes" agent_dir="agent": base
 
     # harbor is a uv tool, so the repo is not on its sys.path.
     PYTHONPATH={{justfile_directory()}}/ops harbor run \
-      --config agent.yaml -p tasks/{{task}} -n 1 -o jobs --job-name local -y \
+      --config agent.yaml -p "$(just _task-path {{task}})" -n 1 -o jobs --job-name local -y \
       --mounts "$MOUNTS]" \
       --ae SUBMISSION_LOCAL_DIR=/submission-src \
       --ae GATEWAY_URL="$GW" \
@@ -99,12 +99,30 @@ submit team:
 show-config agent_dir="agent":
     PYTHONPATH={{justfile_directory()}}/ops harbor run --config agent.yaml -p tasks/incremental-dupes --print-config
 
+# Resolves the task in tasks/ or tasks-scored/, so the same command calibrates a
+# public sample and a scored task. Participants only have the first.
+#
 # Confirm a task is solvable and that its verifier actually fails when unsolved.
 calibrate task="incremental-dupes": base
+    #!/usr/bin/env bash
+    set -euo pipefail
+    P=$(just _task-path {{task}})
     rm -rf jobs/oracle jobs/nop
-    harbor run -p tasks/{{task}} -a oracle -n 1 -o jobs --job-name oracle -y
-    harbor run -p tasks/{{task}} -a nop -n 1 -o jobs --job-name nop -y
-    @echo "oracle must score 1.0 and nop must score 0.0"
+    harbor run -p "$P" -a oracle -n 1 -o jobs --job-name oracle -y
+    harbor run -p "$P" -a nop -n 1 -o jobs --job-name nop -y
+    echo "oracle must score 1.0 and nop must score 0.0"
+
+# Print the directory a task id lives in. Not for direct use; `eval` and
+# `calibrate` share it so a scored task does not need a different command.
+[private]
+_task-path task:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for d in tasks/{{task}} tasks-scored/{{task}}; do
+      [ -f "$d/task.toml" ] && { echo "$d"; exit 0; }
+    done
+    echo "no task '{{task}}' in tasks/ or tasks-scored/" >&2
+    exit 1
 
 # Trajectories, results and timings for every run in jobs/. No infrastructure:
 # it reads the directory Harbor already wrote.

@@ -5,6 +5,9 @@
 jobs/
 .jj/
 .git/
+# tasks-scored/ is its own clone, and its history is 5MB of build context
+# that no image needs.
+**/.git/
 ops/terraform/.terraform/
 ops/platform/static/
 .env

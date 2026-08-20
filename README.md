@@ -18,8 +18,8 @@ just view                       # what your agent actually did
 just submit your-team           # when you want it scored
 ```
 
-Fork this repo. Your agent is `agent/` and the benchmark is `tasks/`, in the
-same tree: one clone, no second repository to keep in step.
+Fork this repo. Your agent is `agent/`, and `tasks/` holds five sample tasks to
+develop it against.
 
 `just eval` mounts your working tree, so there is no commit-push-wait loop: edit,
 run, look, repeat. It talks to the shared gateway, so there is nothing to run
@@ -32,15 +32,33 @@ the context window, and you cannot fix what you have not looked at.
 
 | Path | What it is |
 |---|---|
-| `tasks/` | The benchmark. One directory per task: Dockerfile, fixtures, pytest verifier |
+| `tasks/` | Five sample tasks. One directory per task: Dockerfile, fixtures, pytest verifier |
 | `agent/` | Your agent. Baseline to beat, uv project, fixed entrypoint |
 | `docs/` | Design notes |
 | `ops/` | Everything that runs the event ([`ops/README.md`](ops/README.md)). Not needed to compete |
 
-Every task is here and you can run any of them, which is not an invitation to
-run them all: the full suite takes hours on a laptop and tells you nothing you
-could not learn from one failure. Pick a task you lose, find where your agent
-goes off the rails, fix the context, run it again.
+## What you are scored on
+
+The five tasks in `tasks/` are samples, and none of them counts. Your score
+comes from sixteen tasks you never see, in a private repo, baked into the
+grading worker.
+
+That split is deliberate and it is what the benchmark measures. The graders and
+the reference solutions have to live somewhere, and while they lived here a
+team could read the expected output and write it into its agent instead of
+solving anything -- so the ranking would have gone to whoever noticed, not to
+whoever built the better harness. Public dev split, private test split, the way
+SWE-bench and ARC-AGI do it.
+
+So tune for the general case. An agent that solves the samples by pattern
+matching on them scores nothing. The scored sixteen are the same kind of work
+-- data engineering, one container, a verifier that either passes or does not
+-- and they cover the same ground: SQL and dataframes, dbt and Airflow,
+Terraform, shell and git, reading someone else's run output. They are harder
+than the samples on purpose.
+
+Pick a sample you lose, find where your agent goes off the rails, fix the
+context, run it again.
 
 ## Submitting
 
