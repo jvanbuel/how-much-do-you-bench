@@ -12,6 +12,8 @@ agents:
     model_name: gateway/gemma
   - name: claude-code
     model_name: gemma
+  - name: trae-agent
+    model_name: openai/gemma
   # The baseline `agent/` entrypoint, run exactly as `just eval` runs it. This
   # is the one that exercises the GATEWAY_* env plumbing end to end.
   - name: custom

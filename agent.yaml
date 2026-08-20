@@ -60,8 +60,8 @@ agents:
   # - name: claude-code
   #   model_name: gemma
 
-  # Four harnesses are supported: opencode, pi, claude-code and this file's
-  # `custom` baseline. codex, mini-swe-agent, swe-agent and openhands were tried
+  # Five harnesses are supported: opencode, pi, claude-code, trae-agent and
+  # this file's `custom` baseline. codex, mini-swe-agent, swe-agent and openhands were tried
   # and are not: the first three fail because this model stops emitting
   # structured tool calls under a long agent prompt and writes them as text, and
   # nothing the gateway does fixes that from outside the harness. copilot-cli,
