@@ -151,6 +151,8 @@ test:
 #
 # Needs a key that reaches the gateway (a team key is fine) and local Docker,
 # like `just eval`. Exit code says whether every harness passed.
+#
+# Run every supported harness against one trivial task.
 canary:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -209,8 +211,17 @@ redrive:
 # --- deployment -------------------------------------------------------------
 
 
-# Build both images and push them to ECR, then roll the services.
-deploy: deploy-images deploy-restart
+# The canary is part of deploying rather than a thing to remember afterwards,
+# because the failure it catches is silent: opencode was broken for weeks by a
+# harbor upgrade that started requiring a provider prefix in model_name, and
+# nothing noticed, because the only check that would have caught it was opt-in.
+# Five minutes on a deploy is cheaper than one team's afternoon.
+#
+# It runs last, against the gateway that was just rolled, so a failure means
+# "this deployment is live and broken" -- fix forward or roll back, but know.
+#
+# Build the images, roll the services, then prove the harnesses still work.
+deploy: deploy-images deploy-restart deploy-canary
 
 # Needs the VPN off: the proxy times out the daemon's registry requests, and
 # the symptom is a hang on login rather than an error that says so.
@@ -232,15 +243,37 @@ deploy-images:
       echo "pushed $img"
     done
 
-# Roll all three services onto the current images.
+# The gateway is in this list, and was not: `deploy` pushed a new gateway image
+# and left the old one serving, silently, because terraform sees no diff either
+# (the task definition pins `:latest` with no digest). Every gateway change to
+# date rode along on an unrelated `apply` that happened to roll it. Safe to do
+# here: gateway_replicas is 2 precisely so a rolling restart does not cut
+# in-flight requests.
+#
+# Roll all three services onto the current images, and wait for the gateway.
 deploy-restart:
     #!/usr/bin/env bash
     set -euo pipefail
-    for svc in api worker; do
+    for svc in api worker gateway; do
       AWS_PROFILE={{aws_profile}} aws ecs update-service --region {{aws_region}} \
         --cluster de-benchmark --service $svc --force-new-deployment >/dev/null
     done
-    echo "api and worker rolling"
+    echo "api, worker and gateway rolling"
+    # The canary that follows talks to the gateway, so waiting is not optional:
+    # without it the harnesses race the rollout and fail on the way through.
+    AWS_PROFILE={{aws_profile}} aws ecs wait services-stable --region {{aws_region}} \
+      --cluster de-benchmark --services gateway
+    echo "gateway stable"
+
+# Split out so `just ops::deploy` can end with it and anyone can run it alone.
+#
+# Run the canary against the deployed gateway.
+deploy-canary:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    GW="${GATEWAY_URL:-https://bench-llm.playground.dataminded.cloud/v1}"
+    echo "canary against $GW"
+    GATEWAY_URL="$GW" just ops::canary
 
 # Scale the worker fleet. Concurrency is replicas, not threads.
 deploy-scale n="12":
