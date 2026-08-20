@@ -119,6 +119,26 @@ keeping for any harness that navigates by reading.
   cap plus the verifier, on every single task. It does not finish and get the
   answer wrong; it never stops, and the timeout ends it.
 
+  **The cause is Claude Code's own de-duplication guard.** Reproduced locally
+  on `a-scored-task`: one `ls`, then the same `Read` of the same
+  file forty times. The first read returns the file. Every one after it returns
+
+      Wasted call -- file unchanged since your last Read.
+      Refer to that earlier tool_result instead.
+
+  which Claude Code generates itself, to stop a capable model wasting turns.
+  Gemma does not act on it. It reads the message as a failed call and reissues
+  the identical read, gets scolded again, and repeats until the timeout. By
+  turn 24 it is leaking fragments of its own reasoning into the arguments --
+  `file_path: "analyze_trajectory.py destroy"`.
+
+  Two things follow. **The gateway cannot fix this**: the guard is produced
+  inside the harness and the repeated reads never reach the gateway, which sees
+  forty ordinary successful requests and logs no errors at all. And **the
+  canary cannot catch it**: its task is small enough to finish before anything
+  needs a second look, which is why claude-code passes the canary and fails
+  every real task.
+
   A team that picks this harness spends its budget getting nothing, with no
   signal that the harness rather than its own context engineering is at fault.
   Warn them, or do not offer it.
