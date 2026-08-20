@@ -131,11 +131,6 @@ def harbor_command(job: dict, slug: str, task_path: Path, config: Path | None, k
         # Gemma on Bedrock refuses function tools when a reasoning request comes
         # with them, and an Anthropic `thinking` block becomes exactly that.
         "--ae", "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1",
-        # OpenHands reads neither of the pairs above: its adapter looks for
-        # LLM_BASE_URL and nothing else, and without it the harness comes up
-        # pointed at api.openai.com.
-        "--ae", f"LLM_BASE_URL={GATEWAY_URL}",
-        "--ae", f"LLM_API_KEY={key}",
     ]
 
 
@@ -155,11 +150,6 @@ def harness_env(key: str) -> dict[str, str]:
         "ANTHROPIC_BASE_URL": GATEWAY_URL.removesuffix("/v1"),
         "GATEWAY_API_KEY": key,
         "GATEWAY_URL": GATEWAY_URL,
-        "LLM_API_KEY": key,
-        "LLM_BASE_URL": GATEWAY_URL,
-        # A path inside the task container, read here: swe-agent's adapter takes
-        # SWEAGENT_CONFIG from this process and passes it through as --config.
-        "SWEAGENT_CONFIG": "/opt/sweagent-configs/default_backticks.yaml",
     }
 
 

@@ -46,10 +46,6 @@ eval task="incremental-dupes" agent_dir="agent": base
     # translation. Every agent here calls tools, so adaptive thinking is off.
     export CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1
     export OPENAI_BASE_URL="$GW"
-    # OpenHands reads neither the OPENAI_ nor the ANTHROPIC_ pair.
-    export LLM_BASE_URL="$GW" LLM_API_KEY="$KEY"
-    # Read by harbor's swe-agent adapter here, used inside the container.
-    export SWEAGENT_CONFIG=/opt/sweagent-configs/default_backticks.yaml
 
     MOUNTS='[{"type":"bind","source":"{{justfile_directory()}}/{{agent_dir}}","target":"/submission-src","read_only":true}'
 
@@ -60,8 +56,7 @@ eval task="incremental-dupes" agent_dir="agent": base
       --ae SUBMISSION_LOCAL_DIR=/submission-src \
       --ae GATEWAY_URL="$GW" \
       --ae GATEWAY_API_KEY="$KEY" --ae ANTHROPIC_API_KEY="$KEY" \
-      --ae OPENAI_API_KEY="$KEY" \
-      --ae LLM_BASE_URL="$GW" --ae LLM_API_KEY="$KEY"
+      --ae OPENAI_API_KEY="$KEY"
     # These do sit in argv, where any local process can read them while the
     # rollout runs. Left as they are: --ae is the only way to put a variable in
     # the agent's container (--env-file loads harbor's own environment, not the

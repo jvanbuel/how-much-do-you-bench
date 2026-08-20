@@ -8,18 +8,10 @@
 agents:
   - name: opencode
     model_name: openai/gemma
-  - name: codex
-    model_name: gemma
   - name: pi
     model_name: gateway/gemma
   - name: claude-code
     model_name: gemma
-  # LiteLLM-style spellings: these three resolve the key and the base URL from
-  # the provider prefix, so `openai/` is what points them at the gateway.
-  - name: mini-swe-agent
-    model_name: openai/gemma
-  - name: swe-agent
-    model_name: openai/gemma
   # The baseline `agent/` entrypoint, run exactly as `just eval` runs it. This
   # is the one that exercises the GATEWAY_* env plumbing end to end.
   - name: custom
