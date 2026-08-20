@@ -17,6 +17,17 @@ just ops::api            # builds the frontend, serves it and /results on :8000
 just ops::worker         # polls SQS, runs rollouts, writes DynamoDB
 just ops::test           # scoring, results table and runner self-checks
 just ops::redrive        # put dead-lettered rollouts back on the queue
+```
+
+**Do not poll the rollout queue to watch it.** SQS counts a receive whether or
+not you do anything with the message, the redrive policy dead-letters at five,
+and returning a message with visibility 0 does not give the count back. A
+sweeper polling every 50 seconds dead-lettered seven live rollouts from two
+submissions in ten minutes, which reads as the fleet having stalled. Read
+progress from `/results` or the worker logs; `redrive` puts them back if it
+already happened.
+
+```
 just ops::gateway        # a local LiteLLM instead of the deployed one
 ```
 
