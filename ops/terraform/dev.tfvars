@@ -14,7 +14,10 @@ worker_instances     = 1
 worker_replicas      = 1
 
 # A subset, so a rehearsal finishes in minutes rather than an hour. Repeats of
-# one task would be `incremental-dupes#1,incremental-dupes#2`: the table is
+# one task would be `dbt-scd2#1,dbt-scd2#2`: the table is
 # keyed (submission_id, task_id), so distinct ids are what make four runs four
 # rows instead of one overwritten row.
-task_ids = "incremental-dupes,airflow-assets,airflow-parse-cost,terraform-rekey,dbt-scd2,polars-vectorise"
+# Scored ids only: incremental-dupes and the other public samples are not in
+# the worker image any more, and a rehearsal that names one hangs the
+# submission on "unknown task" rather than failing it.
+task_ids = "airflow-assets,airflow-parse-cost,terraform-rekey,dbt-scd2,polars-vectorise,pyspark-skew"

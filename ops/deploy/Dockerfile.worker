@@ -38,7 +38,15 @@ WORKDIR /app
 COPY ops/platform/common/ /app/common/
 COPY ops/platform/worker/ /app/worker/
 COPY ops/harness/ /app/harness/
-COPY tasks/ /app/tasks/
+# The scored suite comes from the private repo, not from this one: the public
+# tree keeps five samples and nothing that decides the leaderboard. `just
+# ops::tasks-sync` puts the checkout in place, and `deploy-images` refuses to
+# build without it -- an image built from a missing clone would carry zero
+# tasks and every rollout would record "unknown task".
+COPY tasks-scored/ /app/tasks/
+# base/ stays public: local runs need it, every task image is FROM it, and it
+# holds no answers.
+COPY tasks/base/ /app/tasks/base/
 
 # harbor resolves the submission adapter by import path, so the repo root has
 # to be importable.

@@ -9,6 +9,7 @@ Commands here are written to run from the repository root, which is where the
 ## Day to day
 
 ```
+just ops::tasks-sync     # clone/update the private scored tasks at tasks-scored/
 just eval                # run agent/ against a sample task
 just calibrate <task>    # oracle must score 1.0, nop must score 0.0
 just ops::canary         # every supported harness against one trivial task
@@ -26,6 +27,33 @@ harness is collected in [docs/harnesses.md](../docs/harnesses.md).
 
 `eval` and `calibrate` are the participants' own recipes; everything under
 `ops::` is this half of the repo.
+
+## The two halves of the benchmark
+
+The suite is split, and nothing works until you have both halves:
+
+| | Where | What is in it |
+|---|---|---|
+| Samples | `tasks/` in this repo, public | Five unscored tasks teams develop against, plus `base/` |
+| Scored | [`how-much-do-you-bench-tasks`](https://github.com/jvanbuel/how-much-do-you-bench-tasks), private | The sixteen that decide the leaderboard, with their graders and reference solutions |
+
+`just ops::tasks-sync` clones the private half to `tasks-scored/`, which is
+gitignored here. Both consumers read that checkout: `Dockerfile.worker` bakes
+it in as `/app/tasks`, and terraform derives the graded task list and the
+worker memory reservation from its `task.toml` files. `deploy-images` runs the
+sync itself, so the usual path cannot build an image from a missing clone.
+
+They lived in one public tree until 2026-08-20. The problem was not tidiness:
+a team could read `solution/solve.sh` for a task it was about to be scored on.
+A scored benchmark needs its test split held out -- SWE-bench, ARC-AGI and
+Kaggle all draw the same line -- and calibration proved the point separately,
+with the strongest off-the-shelf harness at 14/21 against a 30% design target.
+
+Adding or changing a scored task therefore takes both a `just ops::deploy` and
+a terraform apply: the image carries the verifier, and terraform carries the
+list. Out of step, the worker records "unknown task", which holds a submission
+unfinished rather than failing it. The worker prints the tasks it carries on
+startup, which is where that shows up first.
 
 ## Deploying
 

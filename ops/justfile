@@ -10,6 +10,9 @@ api_url := env_var_or_default("API_URL", "https://bench.playground.dataminded.cl
 # this is generous for iteration and still bounds a leaked key.
 team_budget := env_var_or_default("TEAM_BUDGET", "5")
 rate_limit_rpm := env_var_or_default("RATE_LIMIT_RPM", "60")
+# The held-out half of the benchmark. Private on purpose: it carries the
+# graders and the reference solutions for every scored task.
+scored_tasks_repo := env_var_or_default("SCORED_TASKS_REPO", "git@github.com:jvanbuel/how-much-do-you-bench-tasks.git")
 
 
 # Terraform creates the parameter with a placeholder it then ignores, so a
@@ -223,6 +226,28 @@ redrive:
 # Build the images, roll the services, then prove the harnesses still work.
 deploy: deploy-images deploy-restart deploy-canary
 
+# The graded suite lives in a private repo so that the tree a team clones does
+# not carry the graders and the reference answers for the tasks it is scored
+# on. This puts that checkout at tasks-scored/, where the worker image and
+# terraform both read it.
+#
+# Refuses to leave an empty checkout in place silently: a worker image built
+# without it carries zero tasks, and every rollout records "unknown task".
+#
+# Clone or update the private scored-task checkout.
+tasks-sync:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "$(git rev-parse --show-toplevel)"
+    if [ -d tasks-scored/.git ]; then
+      git -C tasks-scored pull --ff-only -q
+    else
+      git clone -q {{scored_tasks_repo}} tasks-scored
+    fi
+    N=$(ls -d tasks-scored/*/ 2>/dev/null | wc -l | tr -d " ")
+    [ "$N" -gt 0 ] || { echo "tasks-scored/ is empty -- do you have access to {{scored_tasks_repo}}?"; exit 1; }
+    echo "$N scored tasks at $(git -C tasks-scored rev-parse --short HEAD)"
+
 # Needs the VPN off: the proxy times out the daemon's registry requests, and
 # the symptom is a hang on login rather than an error that says so.
 #
@@ -236,6 +261,7 @@ deploy-images:
     REG="$ACCOUNT.dkr.ecr.{{aws_region}}.amazonaws.com"
     AWS_PROFILE={{aws_profile}} aws ecr get-login-password --region {{aws_region}} \
       | docker login --username AWS --password-stdin "$REG"
+    just ops::tasks-sync
     just ops::build-frontend
     for img in api worker gateway; do
       docker build -q -f "ops/deploy/Dockerfile.$img" -t "$REG/de-benchmark-$img:latest" .

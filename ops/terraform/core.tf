@@ -253,9 +253,12 @@ variable "task_ids" {
 locals {
   admin_cidrs = coalesce(var.admin_cidrs, var.dashboard_cidrs)
 
+  # tasks-scored/, not tasks/: the graded suite is the private checkout. The
+  # public tasks/ holds only unscored samples, and deriving from it would
+  # enqueue five rollouts the worker has no verifier for.
   task_files = {
-    for f in fileset("${path.module}/../../tasks", "*/task.toml") :
-    dirname(f) => file("${path.module}/../../tasks/${f}")
+    for f in fileset("${path.module}/../../tasks-scored", "*/task.toml") :
+    dirname(f) => file("${path.module}/../../tasks-scored/${f}")
   }
 
   all_task_ids = sort(keys(local.task_files))
