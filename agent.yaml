@@ -33,16 +33,11 @@
 # something you did not expect.
 
 agents:
-  - name: codex
-    model_name: gemma
+  - name: opencode
+    model_name: openai/gemma
     skills: []
     mcp_servers: []
-    # codex ships a built-in web_search tool, and Bedrock refuses any request
-    # carrying one: "Tool type 'web_search' is not supported". It serves
-    # function, mcp, custom, namespace and tool_search -- the hosted kinds would
-    # have to run on the provider's own infrastructure.
-    kwargs:
-      web_search: disabled
+    kwargs: {}
 
   # Your own harness: the `agent/` directory in this repo, run as
   # `uv run agent --instruction ...`. Uncomment to grade your code instead.
@@ -65,10 +60,20 @@ agents:
   # - name: claude-code
   #   model_name: gemma
 
+  # Four harnesses are supported: opencode, pi, claude-code and this file's
+  # `custom` baseline. codex, mini-swe-agent, swe-agent and openhands were tried
+  # and are not: the first three fail because this model stops emitting
+  # structured tool calls under a long agent prompt and writes them as text, and
+  # nothing the gateway does fixes that from outside the harness. copilot-cli,
+  # gemini-cli and Kiro cannot reach this model at all -- they authenticate to
+  # their own services and have no base URL to override. The evidence for each
+  # is in docs/harnesses.md; you are welcome to prove it wrong, but start there
+  # rather than from scratch.
+
   # Attaching skills and MCP servers looks like this, on any agent above.
   #
-  # - name: mini-swe-agent
-  #   model_name: gemma
+  # - name: opencode
+  #   model_name: openai/gemma
   #   skills:
   #     # A local directory, or a git source like `org/repo@ref`.
   #     - ./skills/data-engineering
@@ -94,7 +99,7 @@ agents:
   #                           means overriding it -- otherwise pi talks to the
   #                           deployed gateway and 401s on your local key.
   #
-  # Measured on the full suite: opencode 8/21, codex 4/21.
+  # Measured on the full suite: opencode 8/21.
   #
   # Everything known about each harness against this model -- spellings, env
   # vars, quirks, what the gateway silently does to requests -- is collected in

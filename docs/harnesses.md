@@ -32,12 +32,16 @@ only on `/v1/responses`, no websocket/realtime routes.
 
 ## Per harness
 
-Suite scores from the calibration benches (21 tasks): **opencode 8/21,
-codex 4/21**. aider scored 11/21 on the same benches and is no longer
-supported: it edits files from its repo map and cannot run a command, so it
-answers a data-engineering task without ever looking at the data. Task images
-still commit their fixtures, which is what made that repo map work and is worth
-keeping for any harness that navigates by reading.
+Four harnesses are supported: **opencode**, **pi**, **claude-code** and the
+**custom** `agent/` baseline. Everything else that was tried is below, with why
+it failed, so nobody spends the day rediscovering it.
+
+Suite scores from the calibration benches (21 tasks): **opencode 8/21**. aider
+scored 11/21 on the same benches and is not supported: it edits files from its
+repo map and cannot run a command, so it answers a data-engineering task
+without ever looking at the data. Task images still commit their fixtures,
+which is what made that repo map work and is worth keeping for any harness that
+navigates by reading.
 
 ### opencode
 
@@ -48,23 +52,6 @@ keeping for any harness that navigates by reading.
   first model call (`opencode.py:481`). A plain `gemma` had been correct, so
   this broke on a harbor upgrade rather than on anything here -- worth checking
   after any harbor bump, for every harness listed in this file.
-
-### codex
-
-- `model_name: gemma`, but env vars are not enough: codex ignores
-  `OPENAI_BASE_URL` unless a provider in `~/.codex/config.toml` declares it.
-  The base image (`tasks/base/Dockerfile`) ships that provider, pointed at the
-  deployed gateway, with `wire_api = "responses"` (the chat wire was removed
-  upstream).
-- Sandboxes commands with bubblewrap, which needs user namespaces a task
-  container doesn't have — the base image sets
-  `sandbox_mode = "danger-full-access"` or every command fails and codex asks
-  the user for help (which once read as 21 tasks of zeros).
-- Tries a websocket first (`/v1/responses` upgrade, then `/v1/realtime`);
-  LiteLLM serves neither. It falls back to HTTPS after five attempts, ~10s per
-  rollout. Harmless, but it means the rollout's key must outlive the container:
-  retiring the key before teardown produced "Invalid proxy server token" on
-  twelve of twenty-one rollouts.
 
 ### pi
 
@@ -85,45 +72,26 @@ keeping for any harness that navigates by reading.
 - `model_name: gemma`. Speaks the Anthropic API: wants `ANTHROPIC_BASE_URL`
   **without** `/v1` (it appends `/v1/messages` itself; handed the OpenAI-style
   base it posts to `/v1/v1/messages` and reports the model as missing).
-- Always sends a `thinking` block and 28 tools; both are handled by the gateway
-  (reasoning stripped, tools trimmed to 18). Runs are set with
-  `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` as belt and braces.
-- With the trim in place it runs (measured: 42 turns, 360k input tokens, every
-  request 200), but it is the most fragile harness against this model. Try it;
-  do not plan your afternoon around it.
-- Both of those readings were wrong, and measuring settled it on 2026-08-19.
-  It was not planning instead of acting: every request was refused whole. Its
-  schemas carry `propertyNames`, which this endpoint rejects at any depth, and
-  the refusal arrives as an opaque `Generation failed` -- so the harness argued
-  with a 400 for 168 turns. The gateway now strips that keyword and Claude Code
-  passes the canary. Treat the old numbers as unmeasured.
+- Sends a `thinking` block and 24 tools, and both travel now. The gateway used
+  to strip the reasoning and trim the tools to 18; neither was necessary, and
+  the story of why is worth one paragraph because it is the trap this whole
+  file exists to prevent.
+- It did not work at all until 2026-08-19, and the reason was never planning
+  instead of acting: every request was refused whole. Its schemas carry
+  `propertyNames`, which this endpoint rejects at any depth, and the refusal
+  arrives as an opaque `Generation failed` -- so a harness that was arguing
+  with a 400 read as one that could not stay on task for 168 turns. Treat the
+  old numbers (42 turns, 360k tokens, "most fragile harness") as unmeasured.
+- The two gateway workarounds were both artefacts of that bug. The 18-tool cap
+  came from a binary search over captured Claude Code requests, every one of
+  which carried `propertyNames`, so it measured the schema refusal and stopped
+  at a meaningless boundary; 60 tools and 48KB of clean schemas pass. The
+  reasoning strip assumed this endpoint refuses tools and reasoning together,
+  which it does not. Both are gone, and Claude Code passes the canary with all
+  24 tools and its thinking intact.
 - Routing it through a different gateway does not help: a gateway cannot route
   around a schema the model's endpoint refuses. Measured against Bifrost the
   same day -- identical request, identical refusal.
-
-### mini-swe-agent, swe-agent
-
-- `model_name: openai/gemma` for both. They resolve provider, key and base URL
-  from the LiteLLM-style prefix, so the `openai/` part is what points them at
-  the gateway rather than at OpenAI.
-- Both read `OPENAI_BASE_URL`. mini-swe-agent is pre-installed in the base
-  image with harbor's own `--with 'litellm[proxy]'` extra, without which it
-  starts and cannot route.
-- swe-agent is deliberately not pre-installed: it does `rm -rf
-  /opt/sweagent-repo` and re-clones on every run, so a baked copy is deleted
-  before it is used. Expect its rollouts to start slower.
-
-### openhands (not supported)
-
-Wanted, and currently unusable through harbor. Its adapter verifies the install
-with `python -m openhands.core.main --version`. That module is gone from
-`openhands-ai` 1.x -- the package is `openhands.sdk` now -- and 0.47, 0.48 and
-0.49 all fail the same command with `No module named 'deprecated'`, a dependency
-those releases do not declare. `uv pip install openhands-ai==0.49.0 Deprecated`
-works, which the adapter has no way to express. The worker, `just eval` and the
-canary do set `LLM_BASE_URL`/`LLM_API_KEY` (the only pair openhands reads), so
-the day the adapter or the package moves, only the agents.yaml entry is
-missing.
 
 ### custom (the `agent/` baseline)
 
@@ -132,6 +100,57 @@ missing.
   with uv pointed at the submission checkout — starting in the checkout instead
   once made an agent write its correct answer next to its own pyproject.toml
   while the verifier read the untouched stub.
+
+## Tried and not supported
+
+Four harnesses were taken as far as they go against this model on 2026-08-19.
+None of them is here because of a missing setting, and the first three fail on
+one thing: **Gemma stops emitting structured tool calls under a long agent
+prompt and writes them as text instead.** With a short prompt and one tool the
+same endpoint returns a structured call every time (12/12, streaming and not,
+at every reasoning level); under codex's ~9K-token system prompt it answers in
+its own native `<tool_code>` syntax, then invents a `<tool_response>` for
+itself and reports work it never did. This is a known Gemma problem wherever a
+server has no parser for its native format
+([ml-explore/mlx-lm#1096](https://github.com/ml-explore/mlx-lm/issues/1096)).
+
+**codex.** Ruled out, in order: pinning to 0.116 per
+[openai/codex#19871](https://github.com/openai/codex/issues/19871) (fails
+identically), `wire_api = "chat"` (removed upstream, refuses to start),
+instructing the model not to do it (2/9 against a 0/6 baseline), and recovering
+the call in the gateway. The last one is the interesting failure: the gateway
+*can* parse the text call and re-emit it as a real one, on the stream and in
+the completed response, and codex discards it anyway. A gateway cannot fix this
+from outside the harness.
+
+**mini-swe-agent.** Same cause, its own error message: `No tool calls found in
+the response. Every response MUST include at least one tool call`, then
+`RepeatedFormatError` after it re-explains the protocol and gets prose again.
+
+**swe-agent.** Two harness bugs fixed before reaching the same wall, both worth
+knowing if it is ever revisited. Harbor's adapter passes the literal string
+`$(pwd)` as the repo path -- single-quoted inside an `echo`, so it is never
+expanded -- and swe-agent dies in `check_valid_repo` on `/app/$(pwd)`; a
+`/testbed` symlink takes the adapter's other branch. Then it asks litellm
+whether the model supports function calling, gets `False` for a name litellm
+has never heard of, and parses replies as tool calls anyway, submitting empty
+patches. `SWEAGENT_CONFIG=/opt/sweagent-configs/default_backticks.yaml` is
+upstream's matched parser-and-templates pair for prose commands; overriding
+only `parse_function` renders an empty user message, because the two are a
+pair. With both fixed it reaches the model and fails in its parser.
+
+**openhands.** Not the model -- it cannot be installed. Harbor verifies with
+`python -m openhands.core.main --version`; that module is gone from
+`openhands-ai` 1.x (the package is `openhands.sdk` now), and 0.47, 0.48 and
+0.49 all fail it with `No module named 'deprecated'`, a dependency those
+releases do not declare. `uv pip install openhands-ai==0.49.0 Deprecated`
+works, which the adapter has no way to express.
+
+Three more cannot reach this model at all, by construction: **copilot-cli**
+authenticates to GitHub and picks from Copilot's catalogue, **gemini-cli**
+takes only Google's credentials, and **Kiro** is an AWS service with a fixed
+model roster and no adapter. None has a base URL to override, so none of them
+can run the model everyone else is running.
 
 ## Environment a rollout gets
 
