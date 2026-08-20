@@ -16,24 +16,34 @@ endpoint, and the gateway absorbs the difference so harnesses don't have to
 | Request feature | What happens | Why |
 |---|---|---|
 | `max_tokens` / `max_completion_tokens` | Dropped | The model rejects both as unsupported; Claude Code and the Anthropic API always send one |
-| Reasoning + tools together | Reasoning forced off (`reasoning_effort: "none"`) | Chat Completions refuses the combination; tools win because an agent that cannot run a command is useless |
-| `thinking` (Anthropic) | Dropped | Becomes `reasoning_effort` in translation, then hits the rule above |
-| Parallel tool calls | Forced off | The model returns one tool call per turn; asking for more is a 400 |
-| More than 18 tools | Trimmed to the 18 most essential, **by name** (bash/read/edit/write/grep first) | The model refuses the 19th tool with an opaque "Generation failed"; Claude Code sends 28 |
+| `propertyNames`, `not`, `if`/`then` in a tool schema | Stripped, at any depth | Refused by the endpoint with an opaque "Generation failed". This is what stopped Claude Code entirely until 2026-08-19 |
+| Built-in tool types (`web_search`, …) | Dropped | Bedrock serves `function`, `mcp`, `custom`, `namespace`, `tool_search` and nothing else |
+| Parallel tool calls | Forced off (chat completions) | The model returns one tool call per turn; asking for more is a 400 |
+| No `max_output_tokens` on `/v1/responses` | Filled in (4000) | The endpoint's own default cuts a reply off mid tool call |
 | `strict` tool schemas | Stripped | Rejected by Bedrock |
 | Unknown params | Dropped (`drop_params: true`) | A harness sending something exotic gets served, not 400'd |
 
-The tool trim is logged by the gateway (`trimmed tools 28 -> 18, dropped: ...`),
-so if a model rambles about a tool it never calls, check the gateway log: the
-harness's system prompt still describes tools the model was never given.
+**Reasoning is not touched.** It used to be forced off and `thinking` dropped,
+on the measured claim that this endpoint refuses tools and reasoning together.
+Re-measured 2026-08-19: with tools and `reasoning_effort: "high"` it returns
+reasoning content *and* a correct tool call, three times out of three, and
+tools work with no reasoning parameter at all. Both workarounds are gone and
+the choice belongs to the harness.
+
+**There is no tool-count cap either.** One used to trim every request to 18
+tools by name; the binary search behind it ran on requests that all carried a
+`propertyNames` schema, so it was measuring the refusal above. 60 tools and
+48KB of clean schemas pass.
 
 Also true of the model: one tool call per turn, 256K context, reasoning content
-only on `/v1/responses`, no websocket/realtime routes.
+only on `/v1/responses`, no websocket/realtime routes. And on `/v1/responses`
+specifically, a long agent prompt makes it write tool calls as text rather than
+emit them — see "Tried and not supported".
 
 ## Per harness
 
-Four harnesses are supported: **opencode**, **pi**, **claude-code** and the
-**custom** `agent/` baseline. Everything else that was tried is below, with why
+Five harnesses are supported: **opencode**, **pi**, **claude-code**,
+**trae-agent** and the **custom** `agent/` baseline. Everything else that was tried is below, with why
 it failed, so nobody spends the day rediscovering it.
 
 Suite scores from the calibration benches (21 tasks): **opencode 8/21**. aider
@@ -93,6 +103,18 @@ navigates by reading.
   around a schema the model's endpoint refuses. Measured against Bifrost the
   same day -- identical request, identical refusal.
 
+### trae-agent
+
+- `model_name: openai/gemma`. Validates the provider prefix the way opencode
+  does (`trae_agent.py:154`), and reads `OPENAI_BASE_URL` inside the container.
+- Nothing else needed: no provider file, no baked install, no environment
+  spelling of its own. Added 2026-08-20 after passing the canary first try,
+  making real tool calls -- three `bash`, three `str_replace_based_edit_tool`,
+  two `task_done`.
+- Useful as the counter-example to codex: a full agent harness with a long
+  prompt *can* drive this model, as long as it speaks chat completions. The
+  tool-call failure is specific to `/v1/responses`, not general.
+
 ### custom (the `agent/` baseline)
 
 - `import_path: harness.submission_agent:Submission`, `model_name: gemma`.
@@ -138,6 +160,11 @@ patches. `SWEAGENT_CONFIG=/opt/sweagent-configs/default_backticks.yaml` is
 upstream's matched parser-and-templates pair for prose commands; overriding
 only `parse_function` renders an empty user message, because the two are a
 pair. With both fixed it reaches the model and fails in its parser.
+
+**qwen-coder.** Refused upstream on its first call -- the same opaque
+`Generation failed` that hid the schema bug -- and its trajectory does not
+record the tools it sent, so the cause is unidentified. Worth another look only
+if someone wants it specifically.
 
 **openhands.** Not the model -- it cannot be installed. Harbor verifies with
 `python -m openhands.core.main --version`; that module is gone from
