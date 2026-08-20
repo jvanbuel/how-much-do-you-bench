@@ -46,12 +46,19 @@ Five harnesses are supported: **opencode**, **pi**, **claude-code**,
 **trae-agent** and the **custom** `agent/` baseline. Everything else that was tried is below, with why
 it failed, so nobody spends the day rediscovering it.
 
-Suite scores from the calibration benches (21 tasks): **opencode 8/21**. aider
-scored 11/21 on the same benches and is not supported: it edits files from its
-repo map and cannot run a command, so it answers a data-engineering task
-without ever looking at the data. Task images still commit their fixtures,
-which is what made that repo map work and is worth keeping for any harness that
-navigates by reading.
+Suite scores, measured 2026-08-18 on the 21-task suite that existed then:
+**pi 14/21, opencode 6/21, aider 2/21, codex 0/21**. Read them as history
+rather than as a baseline -- the suite is now sixteen scored tasks, five of the
+easiest having become unscored public samples, and those sixteen were made
+harder on 2026-08-20 (held-out grader fixtures, and instructions that state the
+goal rather than the output shape). pi's 14/21 against a 30% design target is
+what prompted both.
+
+aider is not supported despite scoring 11/21 on an earlier bench: it edits
+files from its repo map and cannot run a command, so it answers a
+data-engineering task without ever looking at the data. Task images still
+commit their fixtures, which is what made that repo map work and is worth
+keeping for any harness that navigates by reading.
 
 ### opencode
 
