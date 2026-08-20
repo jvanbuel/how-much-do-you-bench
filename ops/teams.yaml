@@ -14,3 +14,8 @@ teams:
   - pi
   - aider
   - codex
+  # One per supported harness, so a full-suite run of each is five submissions
+  # that can be told apart on the board.
+  - claude-code
+  - trae-agent
+  - custom

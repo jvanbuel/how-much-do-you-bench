@@ -200,6 +200,18 @@ variable "worker_instance_type" {
   default = "c7g.2xlarge"
 }
 
+variable "worker_instance_type_fallbacks" {
+  type = list(string)
+  # Tried in order after the preferred type. An apply died with "we currently
+  # do not have sufficient c7g.2xlarge capacity in eu-central-1a" and left the
+  # fleet at zero: one instance type in one region is a single point of
+  # failure, and it fails on the morning you need the capacity most.
+  #
+  # All arm64, all 8 vCPU, all at least the 16GiB the preferred type has, so a
+  # replica reserves the same budget whichever it lands on.
+  default = ["c6g.2xlarge", "m7g.2xlarge", "m6g.2xlarge"]
+}
+
 variable "worker_instances" {
   type    = number
   default = 1

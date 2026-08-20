@@ -431,9 +431,31 @@ resource "aws_autoscaling_group" "worker" {
   max_size            = var.worker_instances
   desired_capacity    = var.worker_instances
 
-  launch_template {
-    id      = aws_launch_template.worker.id
-    version = "$Latest"
+  # Mixed instances rather than a single type: an ASG that can only launch one
+  # instance type fails the whole scaling activity when that type is short in
+  # the AZ it picked, which is how a deploy left the fleet at zero. Prioritized
+  # rather than lowest-price, so the preferred type is still what we normally
+  # get and the rest are only reached for when it is unavailable.
+  mixed_instances_policy {
+    launch_template {
+      launch_template_specification {
+        launch_template_id = aws_launch_template.worker.id
+        version            = "$Latest"
+      }
+
+      dynamic "override" {
+        for_each = concat([var.worker_instance_type], var.worker_instance_type_fallbacks)
+        content {
+          instance_type = override.value
+        }
+      }
+    }
+
+    instances_distribution {
+      on_demand_allocation_strategy = "prioritized"
+      on_demand_base_capacity       = 0
+      on_demand_percentage_above_base_capacity = 100
+    }
   }
 
   tag {

@@ -10,6 +10,9 @@
 # rollout on your laptop for nothing, through the same Harbor path the workers
 # use, so bring the fleet up only to exercise ECS itself.
 worker_instance_type = "c7g.xlarge"
+# Size-matched fallbacks: the defaults are 2xlarge, which a dev fleet does not
+# need and should not silently get.
+worker_instance_type_fallbacks = ["c6g.xlarge", "m7g.xlarge", "m6g.xlarge"]
 worker_instances     = 1
 worker_replicas      = 1
 
