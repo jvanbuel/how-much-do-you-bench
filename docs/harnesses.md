@@ -113,12 +113,26 @@ keeping for any harness that navigates by reading.
   to strip the reasoning and trim the tools to 18; neither was necessary, and
   the story of why is worth one paragraph because it is the trap this whole
   file exists to prevent.
-- It did not work at all until 2026-08-19, and the reason was never planning
-  instead of acting: every request was refused whole. Its schemas carry
-  `propertyNames`, which this endpoint rejects at any depth, and the refusal
-  arrives as an opaque `Generation failed` -- so a harness that was arguing
-  with a 400 read as one that could not stay on task for 168 turns. Treat the
-  old numbers (42 turns, 360k tokens, "most fragile harness") as unmeasured.
+- **It scores 0/17 and burns eight times the tokens doing it.** Measured on the
+  graded fleet, 2026-08-20: 2.45M tokens per task against opencode's 307K and
+  pi's 285K, and 351s per task against their 115s -- which is the 300s agent
+  cap plus the verifier, on every single task. It does not finish and get the
+  answer wrong; it never stops, and the timeout ends it.
+
+  A team that picks this harness spends its budget getting nothing, with no
+  signal that the harness rather than its own context engineering is at fault.
+  Warn them, or do not offer it.
+- It did not work at all until 2026-08-19, and that was a separate fault: every
+  request was refused whole. Its schemas carry `propertyNames`, which this
+  endpoint rejects at any depth, and the refusal arrives as an opaque
+  `Generation failed` -- so a harness arguing with a 400 read as one that could
+  not stay on task for 168 turns.
+
+  I concluded from that fix that the old "42 turns, 360k tokens, most fragile
+  harness" reputation was an artefact of the schema bug and should be treated
+  as unmeasured. The graded run says otherwise: the schema bug is fixed and it
+  still churns to the cap. Two faults, and fixing the loud one did not touch
+  the quiet one.
 - The two gateway workarounds were both artefacts of that bug. The 18-tool cap
   came from a binary search over captured Claude Code requests, every one of
   which carried `propertyNames`, so it measured the schema refusal and stopped
