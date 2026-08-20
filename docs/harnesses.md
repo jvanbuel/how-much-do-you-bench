@@ -47,12 +47,32 @@ Five harnesses are supported: **opencode**, **pi**, **claude-code**,
 it failed, so nobody spends the day rediscovering it.
 
 Suite scores, measured 2026-08-18 on the 21-task suite that existed then:
-**pi 14/21, opencode 6/21, aider 2/21, codex 0/21**. Read them as history
-rather than as a baseline -- the suite is now sixteen scored tasks, five of the
-easiest having become unscored public samples, and those sixteen were made
-harder on 2026-08-20 (held-out grader fixtures, and instructions that state the
-goal rather than the output shape). pi's 14/21 against a 30% design target is
-what prompted both.
+**pi 14/21, opencode 6/21, aider 2/21, codex 0/21**. The suite is now sixteen
+scored tasks, the five easiest having become unscored public samples.
+
+**pi scores 10/16 on the current suite** (2026-08-20, one trial per task,
+`a-scored-task` unmeasured -- a local disk-full, not a task defect). The design
+target is ~30%, so it is still roughly twice as easy as intended, and the two
+changes made that day did not move it:
+
+* *Held-out grader fixtures* -- five graders now also run against input in
+  /tests that the agent never sees. This closes a real hole (an answer fitted
+  to the visible sample used to pass) but costs a competent harness nothing:
+  pi passed `a-scored-task` with all six new edge cases.
+* *De-specified instructions* -- the output contract moved from instruction.md
+  into the workspace stub. Two tasks pi previously failed started passing
+  (`a-scored-task`, `a-scored-task`), which is the
+  wrong direction; a contract in the file the agent is already reading may
+  simply survive the context better than one in a long prompt.
+
+Do not read a one-trial difference as a result. pi's two graded submissions
+were 14/21 and 0/21, so the noise floor swamps a 9-vs-10 change; calibration
+needs n>=3 per task. What the failures do say is structural: pi fails
+`a-scored-task`, `proxmox`, `a-scored-task`, `a-scored-task` and
+`a-scored-task`, every one of which needs several correct actions in sequence or
+a running system to interact with, and passes nearly everything that is one
+file solved in one shot. Difficulty lives on that axis, and no prompt edit
+reaches it -- it takes authoring multi-step tasks.
 
 aider is not supported despite scoring 11/21 on an earlier bench: it edits
 files from its repo map and cannot run a command, so it answers a
