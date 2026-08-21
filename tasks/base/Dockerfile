@@ -41,6 +41,24 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | b
     && uv python install 3.12 \
     && uv cache prune --ci || true
 
+# nvm puts node under $NVM_DIR/versions/node/<version>/bin, which is on the
+# PATH only for a shell that has sourced nvm.sh. A login shell re-sources
+# /etc/profile and drops it, so `npx` is not found -- and an MCP server
+# configured as `command: npx` fails to spawn, which looks exactly like an MCP
+# server that started and turned out not to help.
+#
+# Symlinks rather than ENV PATH, because /usr/local/bin survives a login shell
+# and an ENV PATH does not. Resolved from nvm rather than written out, so a
+# version bump above does not leave these pointing at nothing.
+#
+# Verified in the same layer: a broken link should fail the build here rather
+# than a rollout an hour later.
+RUN . "$NVM_DIR/nvm.sh" \
+    && NODE_BIN="$(dirname "$(nvm which current)")" \
+    && for b in node npm npx; do ln -sf "$NODE_BIN/$b" "/usr/local/bin/$b"; done \
+    && env -i /bin/sh -lc 'node --version && npx --version' \
+    && env -i /bin/sh -lc 'command -v opencode >/dev/null || true'
+
 # pi cannot be pointed at an OpenAI-compatible endpoint by environment variable.
 # Tested: with OPENAI_BASE_URL set it still authenticates against api.openai.com
 # and returns 401, and its only base-URL variable is Azure's. A custom provider
