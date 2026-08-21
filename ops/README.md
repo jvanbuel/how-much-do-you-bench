@@ -33,7 +33,12 @@ just ops::gateway        # a local LiteLLM instead of the deployed one
 
 Run `canary` after touching the gateway config, the base image, or a harness
 spelling: every harness incident so far burned a full bench run to discover,
-and each would have shown up there in minutes. What is known about each
+and each would have shown up there in minutes.
+
+**It answers one question: can this harness reach the model.** Its task is
+solved in a single turn, so it never makes a second tool call -- and both bugs
+that took claude-code to 0/17 begin exactly there. The canary passed green
+through all of it. Before trusting a harness, run it on a real task. What is known about each
 harness is collected in [docs/harnesses.md](../docs/harnesses.md).
 
 `eval` and `calibrate` are the participants' own recipes; everything under
