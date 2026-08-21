@@ -121,7 +121,13 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
-    actions   = ["dynamodb:PutItem", "dynamodb:UpdateItem"]
+    # GetItem is how a worker learns a submission was cancelled: it reads the
+    # _meta row before starting each rollout. Without it the read is denied,
+    # and because that read fails open -- a DynamoDB blip must not strand a
+    # submission nobody cancelled -- the denial is silent and every cancelled
+    # rollout runs anyway. Which is exactly what happened the first time this
+    # shipped.
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]
     resources = [aws_dynamodb_table.results.arn]
   }
 }

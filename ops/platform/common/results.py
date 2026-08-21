@@ -10,6 +10,7 @@ the submission itself; every other row is one rollout.
 """
 
 import os
+import sys
 from datetime import UTC, datetime
 from typing import Any
 
@@ -103,6 +104,66 @@ def meta_item(submission_id: str, team: str, repo_url: str, commit: str, task_co
     }
 
 
+# A submission a team has called off. The rollouts are already on the queue and
+# SQS has no way to take a specific message back, so the flag is what stops
+# them: the worker reads it after receiving a message and before starting any
+# work, and drops the rollout instead of running it.
+#
+# The alternative was draining the queue by hand, which is what happened the
+# first time this was needed. Receiving a message counts against its redrive
+# policy whether or not you act on it, so the drain pushed seven live rollouts
+# from two other submissions into the dead-letter queue.
+CANCELLED = "cancelled"
+
+
+def cancel(tbl, submission_id: str, team: str) -> bool:
+    """Mark a submission cancelled. False if it is not this team's to cancel.
+
+    Conditional on the team, so a key can only stop its own work, and on the
+    row existing, so a typo is a refusal rather than a new row that quietly
+    cancels nothing.
+    """
+    try:
+        tbl.update_item(
+            Key={"submission_id": submission_id, "task_id": META},
+            UpdateExpression="SET #s = :c, cancelled_at = :t",
+            ConditionExpression="attribute_exists(submission_id) AND team = :team",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={
+                ":c": CANCELLED,
+                ":t": datetime.now(UTC).isoformat(),
+                ":team": team,
+            },
+        )
+    except tbl.meta.client.exceptions.ConditionalCheckFailedException:
+        return False
+    return True
+
+
+def is_cancelled(tbl, submission_id: str) -> bool:
+    """Whether this submission has been called off.
+
+    Read on every rollout before it starts, so it is a point read on the key
+    rather than a scan. A read that fails is treated as not cancelled: losing a
+    cancellation costs one rollout, and refusing to run because DynamoDB
+    blinked would strand a submission nobody cancelled.
+    """
+    try:
+        got = tbl.get_item(
+            Key={"submission_id": submission_id, "task_id": META},
+            ProjectionExpression="#s",
+            ExpressionAttributeNames={"#s": "status"},
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Fail open, but never quietly. This swallowed an AccessDenied once --
+        # the worker had PutItem and UpdateItem but not GetItem -- and the only
+        # symptom was that cancelling did nothing at all.
+        print(f"!! could not read cancellation for {submission_id}: {exc}",
+              file=sys.stderr, flush=True)
+        return False
+    return (got.get("Item") or {}).get("status") == CANCELLED
+
+
 def rollout_item(job: dict, result: dict) -> dict:
     """One finished rollout, ready to write.
 
@@ -168,6 +229,10 @@ def summarise(items: list[dict]) -> list[dict]:
                 "commit": info["commit"][:8],
                 "created_at": info.get("created_at"),
                 "task_count": int(info.get("task_count", 0)),
+                # Without this a cancelled submission is indistinguishable from
+                # one whose rollouts are still queued, which is the confusion
+                # the flag exists to remove.
+                "status": info.get("status", "running"),
                 "completed": len(done),
                 # Rollouts that never produced a result. Shown rather than
                 # folded into the score, because nobody earned them.
@@ -209,6 +274,75 @@ def summarise(items: list[dict]) -> list[dict]:
             }
         )
     return submissions
+
+
+def _demo_cancel() -> None:
+    """Cancelling is a conditional write and a point read, and the condition is
+    the whole of the authorisation: get it wrong and one team can stop
+    another's work. Exercised against a fake table rather than DynamoDB so it
+    runs in the self-check."""
+
+    class _Denied(Exception):
+        pass
+
+    class _Client:
+        exceptions = type("E", (), {"ConditionalCheckFailedException": _Denied})
+
+    class _Meta:
+        client = _Client()
+
+    class _Table:
+        meta = _Meta()
+
+        def __init__(self, rows):
+            self.rows = rows
+
+        def update_item(self, Key, UpdateExpression, ConditionExpression,
+                        ExpressionAttributeNames, ExpressionAttributeValues):
+            row = self.rows.get((Key["submission_id"], Key["task_id"]))
+            if row is None or row.get("team") != ExpressionAttributeValues[":team"]:
+                raise _Denied()
+            row["status"] = ExpressionAttributeValues[":c"]
+
+        def get_item(self, Key, ProjectionExpression, ExpressionAttributeNames):
+            row = self.rows.get((Key["submission_id"], Key["task_id"]))
+            return {"Item": row} if row else {}
+
+    rows = {("a-1", META): {"team": "alpha"}, ("b-1", META): {"team": "beta"}}
+    tbl = _Table(rows)
+
+    assert not is_cancelled(tbl, "a-1")
+    assert cancel(tbl, "a-1", "alpha") is True
+    assert is_cancelled(tbl, "a-1")
+
+    # Another team's submission, and one that does not exist.
+    assert cancel(tbl, "b-1", "alpha") is False
+    assert not is_cancelled(tbl, "b-1")
+    assert cancel(tbl, "nope-1", "alpha") is False
+
+    # A read that fails must not look like a cancellation, or a blip strands a
+    # submission nobody cancelled.
+    class _Broken(_Table):
+        def get_item(self, **kw):
+            raise RuntimeError("dynamodb is having a moment")
+
+    assert is_cancelled(_Broken(rows), "a-1") is False, (
+        "a failed read must not look like a cancellation"
+    )
+
+    # And it has to be loud. The first version of this swallowed an AccessDenied
+    # -- the worker lacked GetItem -- and cancelling silently did nothing.
+    import contextlib
+    import io
+
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        is_cancelled(_Broken(rows), "a-1")
+    assert "could not read cancellation" in err.getvalue(), (
+        "a failed read must say so on stderr, or the next permissions gap is "
+        "invisible again"
+    )
+    print("cancel ok")
 
 
 def _demo() -> None:
@@ -259,3 +393,4 @@ def _demo() -> None:
 
 if __name__ == "__main__":
     _demo()
+    _demo_cancel()

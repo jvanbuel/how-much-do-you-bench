@@ -214,6 +214,35 @@ def submit(request: SubmitRequest, authorization: str = Header(default=None)):
 # What the load balancer checks. Deliberately touches nothing: pointed at
 # /results it took a full table scan every thirty seconds per target, and a
 # throttled scan would have taken the dashboard down for being unhealthy.
+class CancelRequest(BaseModel):
+    submission_id: str
+
+
+@app.post("/cancel")
+def cancel(request: CancelRequest, authorization: str = Header(default=None)):
+    """Call off a submission that is still running.
+
+    The rollouts are already on the queue and SQS cannot take a particular
+    message back, so this sets a flag the worker reads before it starts each
+    one. Anything already running finishes -- stopping it would mean killing a
+    container mid-rollout for no gain, since the work is paid for either way.
+
+    The key decides whose submission this is. A team cannot cancel another's,
+    and a submission id that does not exist is refused rather than created.
+
+    Deliberately does not give the submission back: the limit is on submitting,
+    not on finishing, and refunding it would make cancel-and-retry a way around
+    the cap.
+    """
+    team = _authenticated(authorization)
+    if not results.cancel(table, request.submission_id, team):
+        raise HTTPException(
+            404,
+            f"no submission {request.submission_id} belonging to {team}",
+        )
+    return {"submission_id": request.submission_id, "status": results.CANCELLED}
+
+
 @app.get("/health")
 def health():
     return {"ok": True}

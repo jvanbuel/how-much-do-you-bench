@@ -96,6 +96,24 @@ submit team:
       -d "{\"team\":\"{{team}}\",\"repo_url\":\"$URL\",\"commit\":\"$SHA\"}"
     echo
 
+# Stop a submission you no longer want scored. Rollouts already running finish;
+# everything still queued is dropped, and the board says cancelled rather than
+# leaving it looking stalled.
+#
+# It does not give the submission back -- the limit is on submitting, not on
+# finishing.
+#
+# Cancel a running submission.
+cancel submission_id:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    KEY="${GATEWAY_API_KEY:-}"
+    [ -n "$KEY" ] || { echo "set GATEWAY_API_KEY to your team key (see the kickoff message)"; exit 1; }
+    curl -fsS -X POST {{api_url}}/cancel -H 'content-type: application/json' \
+      --config <(printf 'header = "Authorization: Bearer %s"\n' "$KEY") \
+      -d "{\"submission_id\":\"{{submission_id}}\"}"
+    echo
+
 show-config agent_dir="agent":
     PYTHONPATH={{justfile_directory()}}/ops harbor run --config agent.yaml -p tasks/incremental-dupes --print-config
 

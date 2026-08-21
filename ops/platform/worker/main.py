@@ -442,6 +442,18 @@ def record(job: dict, result: dict) -> None:
 def handle(message: dict) -> None:
     job = json.loads(message["Body"])
     attempt = int(message.get("Attributes", {}).get("ApproximateReceiveCount", 1))
+
+    # Checked here rather than before the queue, because a cancellation lands
+    # while the rollouts are already queued and SQS cannot take a particular
+    # message back. Returning drops the message: no row is written, so the
+    # board shows the submission cancelled with the tasks that did run, not a
+    # zero nobody earned.
+    #
+    # Before the rollout, not after: the point is not to spend the model call.
+    if results.is_cancelled(table(), job["submission_id"]):
+        print(f"~~ {job['submission_id']} / {job['task_id']} cancelled, skipping", flush=True)
+        return
+
     print(f"-> {job['submission_id']} / {job['task_id']} (attempt {attempt})", flush=True)
 
     slug = viewer_slug(job["submission_id"], job["task_id"])
