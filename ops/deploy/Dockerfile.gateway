@@ -16,3 +16,13 @@ COPY ops/gateway/config.yaml /app/config.yaml
 # The callback in config.yaml is imported by module name, so it has to sit
 # beside the config on the path LiteLLM runs from.
 COPY ops/gateway/hooks.py /app/hooks.py
+
+# The tool-id proxy takes the published port and LiteLLM moves one over. Why:
+# LiteLLM runs no post-call hook on /v1/messages, so the tool-call ids Claude
+# Code needs to be unique cannot be fixed in hooks.py with everything else.
+# ENTRYPOINT rather than CMD, because ECS supplies the command and would
+# override it.
+COPY ops/gateway/tool_id_proxy.py /app/tool_id_proxy.py
+COPY ops/gateway/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
