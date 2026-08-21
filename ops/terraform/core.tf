@@ -319,8 +319,10 @@ output "task_budgets" {
 }
 
 variable "max_submissions" {
-  type    = number
-  default = 5
+  type = number
+  # Spent on submitting, not on finishing: a cancelled submission does not come
+  # back, so the cap also bounds how much fleet a team can hold at once.
+  default = 10
 }
 
 # Who may reach the gateway's admin API. Defaults to whoever may reach the
