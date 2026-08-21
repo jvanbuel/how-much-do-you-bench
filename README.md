@@ -35,7 +35,7 @@ the context window, and you cannot fix what you have not looked at.
 | `tasks/` | Five sample tasks. One directory per task: Dockerfile, fixtures, pytest verifier |
 | `agent/` | Your agent. Baseline to beat, uv project, fixed entrypoint |
 | `docs/` | Design notes |
-| `ops/` | Everything that runs the event ([`ops/README.md`](ops/README.md)). Not needed to compete |
+| `harness/` | The adapter that runs `agent/` under grading. You do not edit it |
 
 ## What you are scored on
 
@@ -76,5 +76,5 @@ stops one you no longer want, but does not give it back.
 
 ## Operating the benchmark
 
-Deployment, architecture, grading internals and the pre-event checklist live in
-[`ops/README.md`](ops/README.md). Nothing there is needed to compete.
+Deployment, architecture and grading internals live in the instructor
+repository, along with the scored tasks. Nothing there is needed to compete.

@@ -24,10 +24,10 @@ eval task="incremental-dupes" agent_dir="agent": base
     # timeout with an empty trajectory that looks like a broken harness or a
     # confused model. Ten minutes to learn what this says in two seconds.
     #
-    # Re-read a stale key with: just ops::team-keys <your-team>
+    # A stale key is re-issued by whoever ran the kickoff; ask them.
     CODE=$(curl -s -o /dev/null -w '%{http_code}' "${GATEWAY_URL:-{{gateway_url}}}/models" \
       -H "authorization: Bearer $KEY")
-    [ "$CODE" = 200 ] || { echo "gateway rejected your key (HTTP $CODE); re-read it: just ops::team-keys <team>"; exit 1; }
+    [ "$CODE" = 200 ] || { echo "gateway rejected your key (HTTP $CODE); ask for a fresh one"; exit 1; }
     # Harbor will not resume a job directory whose config changed, and this is
     # the iterate-and-look loop, so it has to be re-runnable. After the key
     # check, not before: a run that cannot start should not take the previous
@@ -50,7 +50,7 @@ eval task="incremental-dupes" agent_dir="agent": base
     MOUNTS='[{"type":"bind","source":"{{justfile_directory()}}/{{agent_dir}}","target":"/submission-src","read_only":true}'
 
     # harbor is a uv tool, so the repo is not on its sys.path.
-    PYTHONPATH={{justfile_directory()}}/ops harbor run \
+    PYTHONPATH={{justfile_directory()}} harbor run \
       --config agent.yaml -p "$(just _task-path {{task}})" -n 1 -o jobs --job-name local -y \
       --mounts "$MOUNTS]" \
       --ae SUBMISSION_LOCAL_DIR=/submission-src \
@@ -115,10 +115,8 @@ cancel submission_id:
     echo
 
 show-config agent_dir="agent":
-    PYTHONPATH={{justfile_directory()}}/ops harbor run --config agent.yaml -p tasks/incremental-dupes --print-config
+    PYTHONPATH={{justfile_directory()}} harbor run --config agent.yaml -p tasks/incremental-dupes --print-config
 
-# Resolves the task in tasks/ or tasks-scored/, so the same command calibrates a
-# public sample and a scored task. Participants only have the first.
 #
 # Confirm a task is solvable and that its verifier actually fails when unsolved.
 calibrate task="incremental-dupes": base
@@ -131,15 +129,19 @@ calibrate task="incremental-dupes": base
     echo "oracle must score 1.0 and nop must score 0.0"
 
 # Print the directory a task id lives in. Not for direct use; `eval` and
-# `calibrate` share it so a scored task does not need a different command.
+# `calibrate` share it.
+#
+# Also looks in tasks-scored/, which only exists for whoever runs the event: the
+# instructor repo clones this one, so the same command works from either side
+# without a second spelling.
 [private]
 _task-path task:
     #!/usr/bin/env bash
     set -euo pipefail
-    for d in tasks/{{task}} tasks-scored/{{task}}; do
+    for d in tasks/{{task}} tasks-scored/{{task}} ../tasks/{{task}}; do
       [ -f "$d/task.toml" ] && { echo "$d"; exit 0; }
     done
-    echo "no task '{{task}}' in tasks/ or tasks-scored/" >&2
+    echo "no task '{{task}}' in tasks/ -- the five samples are what this repo carries" >&2
     exit 1
 
 # Trajectories, results and timings for every run in jobs/. No infrastructure:
@@ -157,5 +159,3 @@ view:
 base:
     docker build -q -t hmdyb-task-base:1 tasks/base
 
-# Everything for running the event: deploy, keys, fleet, reset.
-mod ops "ops/justfile"

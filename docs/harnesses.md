@@ -4,14 +4,14 @@ Everything learned, per harness, about running off-the-shelf coding agents
 against Gemma 4 31B through the gateway. Every line here was paid for with a
 bench run; read it before choosing a harness or debugging one.
 
-Quick sanity check for all of them: `just ops::canary` runs every harness below
-against a trivial task and says which ones are broken.
+Whoever runs the event has a canary that exercises every harness below against
+a trivial task; ask them if you suspect a harness rather than your own work.
 
 ## What the gateway does to every request
 
 The model (Bedrock mantle, `google.gemma-4-31b`) is not a standard OpenAI
 endpoint, and the gateway absorbs the difference so harnesses don't have to
-(`ops/gateway/config.yaml`, `ops/gateway/hooks.py`):
+(in the gateway configuration, which the instructors hold):
 
 | Request feature | What happens | Why |
 |---|---|---|
@@ -128,7 +128,8 @@ keeping for any harness that navigates by reading.
   transcript. The id comes from the endpoint, not LiteLLM, whose source has no
   `call_` prefix anywhere.
 
-  It is fixed in `ops/gateway/tool_id_proxy.py` rather than in hooks.py,
+  It is fixed in a small proxy in front of the gateway rather than in a
+  LiteLLM hook,
   because LiteLLM runs no post-call hook on `/v1/messages` -- their
   [issue #27518](https://github.com/BerriAI/litellm/issues/27518), and measured
   here as 352 pre-call hook events against 3 post-call over forty minutes. The
@@ -256,7 +257,7 @@ The worker passes the gateway in every spelling anyone reads, both into the
 task container (`--ae`) and into the harbor process itself (pi resolves its
 key there): `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`
 (no `/v1`), `ANTHROPIC_API_KEY`, `GATEWAY_URL`, `GATEWAY_API_KEY`. `just eval`
-and `just ops::canary` set the same, which is what keeps local runs and graded
+and the graded runner set the same, which is what keeps local runs and graded
 runs the same experiment.
 
 ## Adding a harness
@@ -268,5 +269,5 @@ runs the same experiment.
    traps are: env vars vs. provider files, prefix-eating adapters).
 3. If it needs a provider file, ship it in `tasks/base/Dockerfile` with
    `printf`, and parse it in the same layer so a malformed file fails the build.
-4. Add it to `ops/canary/agents.yaml` and run `just ops::canary`.
+4. Ask whoever runs the event to add it to the canary.
 5. Record what you learned here.
