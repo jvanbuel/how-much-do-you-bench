@@ -113,65 +113,61 @@ keeping for any harness that navigates by reading.
   to strip the reasoning and trim the tools to 18; neither was necessary, and
   the story of why is worth one paragraph because it is the trap this whole
   file exists to prevent.
-- **It scores 0/17 and burns eight times the tokens doing it.** Measured on the
-  graded fleet, 2026-08-20: 2.45M tokens per task against opencode's 307K and
-  pi's 285K, and 351s per task against their 115s -- which is the 300s agent
-  cap plus the verifier, on every single task. It does not finish and get the
-  answer wrong; it never stops, and the timeout ends it.
+- **It works, after two bugs in this gateway were fixed.** It scored 0/17 on
+  the 2026-08-20 graded run, burning 2.45M tokens per task against opencode's
+  307K and running to the 300s cap every time. Read that as a measurement of
+  the gateway, not of the harness: with both fixes in it solves `a-scored-task` --
+  38 turns, `stop_reason: end_turn`, zero interruptions, reward 1 -- running
+  the pipeline, querying DuckDB to check its own output, then editing the
+  snapshot config and writing a staging model.
 
-  **The cause is two bugs in this gateway, and neither is the harness.**
-  Found by putting a logging proxy between Claude Code and the gateway and
-  reading the wire, after three wrong theories drawn from the agent log.
-
-  *One: `thinking` and `output_config` on a tool-calling request.* The model
-  answers with reasoning and no tool call, so the harness has nothing to act
-  on, writes `(no content)` and asks again -- one captured request carried 103
-  thinking blocks, 105 `(no content)` turns and a single tool call. Claude Code
-  sends `{"thinking": {"type": "adaptive"}}` and `output_config.effort: high`
-  whatever `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` is set to; that variable
-  never reaches the request. `output_config` is also
+  *The first bug was `thinking` and `output_config` on tool-calling requests.*
+  The model answers with reasoning and no tool call, the harness has nothing to
+  act on, writes `(no content)` and asks again: one captured request carried
+  103 thinking blocks, 105 `(no content)` turns and a single tool call. Claude
+  Code sends `{"thinking": {"type": "adaptive"}}` and
+  `output_config.effort: high` whatever `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING`
+  says -- that variable never reaches the request. `output_config` is also
   [an open LiteLLM bug](https://github.com/BerriAI/litellm/issues/22963). Both
-  are dropped from tool-calling requests in hooks.py now.
+  are dropped in hooks.py.
 
-  This one was self-inflicted: the gateway used to drop them, and it stopped on
-  2026-08-19 because tools and `reasoning_effort` were measured coexisting
-  happily. That measurement was on chat completions with a different parameter
-  and never touched the route that breaks.
+  This one was self-inflicted: the gateway used to drop them and stopped on
+  2026-08-19, on a measurement of tools and `reasoning_effort` coexisting on
+  chat completions -- a different route and a different parameter from the one
+  that breaks.
 
-  *Two: every tool call comes back with the id `call_0`.* It is the call's
-  index within a response and this model makes one call per turn, so it is
-  index 0 forever -- 76 of them in one rollout. Claude Code aborts a `tool_use`
-  whose id it has already processed, which is what `[Tool use interrupted]`
-  means in its transcript: the first call runs and every later one is discarded
-  as a replay. The id comes from the endpoint, not from LiteLLM, whose source
-  contains no `call_` prefix at all.
+  *The second was that every tool call came back as `call_0`.* The id is the
+  call's index within a response and this model makes one call per turn, so it
+  is index 0 forever -- 76 identical ids in one rollout. Claude Code aborts a
+  `tool_use` whose id it has already handled, so the first call runs and the
+  rest are discarded; that is what `[Tool use interrupted]` means in its
+  transcript. The id comes from the endpoint, not LiteLLM, whose source has no
+  `call_` prefix anywhere.
 
-  With unique ids the harness works. Measured 2026-08-20 on
-  `a-scored-task`: `ls -R`, read the stub, read two doc pages,
-  read a sample trajectory, edit the implementation, write a test, stop --
-  eight turns, `stop_reason: end_turn`, 13.8s of API time, no interruptions.
-  Against 40-plus turns and 2.45M tokens before.
+  It is fixed in `ops/gateway/tool_id_proxy.py` rather than in hooks.py,
+  because LiteLLM runs no post-call hook on `/v1/messages` -- their
+  [issue #27518](https://github.com/BerriAI/litellm/issues/27518), and measured
+  here as 352 pre-call hook events against 3 post-call over forty minutes. The
+  proxy runs in the gateway container, litellm moves to 4001, and terraform
+  does not change.
 
-  **The id fix has nowhere to live yet.** LiteLLM's post-call hooks do not run
-  on `/v1/messages`: over forty minutes the gateway logged 352 pre-call hook
-  events and 3 post-call ones, and those three were direct calls to
-  `/chat/completions`. The rewrite is deployed for chat completions and proven
-  in a proxy for the Anthropic route; putting it in production needs either a
-  sidecar or an extension point nobody has found.
-  [PR #23507](https://github.com/BerriAI/litellm/pull/23507) is titled exactly
-  for this bug and was closed unmerged against a different provider.
+  **It rewrites `/v1/messages` and relays every other route byte for byte.**
+  The OpenAI-shaped harnesses pair a tool result with the call before it, so a
+  repeated id costs them nothing and all four score the same with `call_0`
+  throughout. They should not carry a change they do not need.
+  `TOOL_ID_PROXY_ENABLED=0` disables the rewrite without a rebuild.
 
-  **Read the 0/17 on the board as a measurement of this gateway.** It is not a
-  measurement of the harness, and claude-code should be re-run once the ids are
-  unique on the route it uses.
+  Prior art agrees on the first fix and goes further:
+  [claude-code-local](https://github.com/nicedreamzapp/claude-code-local) runs
+  Claude Code against Gemma 4 31B and ships a thinking filter on by default,
+  recovery for garbled tool JSON, and a 28x reduction of the harness prompt.
+  People do run this pairing; nobody does it through stock LiteLLM.
 
-  Note what could not have caught this. The canary answers in a single turn, so
-  it never makes a second tool call -- which is where every one of these
-  failures begins. It proves a harness can reach the model and nothing more.
+  Note what could not have caught any of this. The canary answers in one turn,
+  so it never makes a second tool call -- which is where every one of these
+  failures begins. It passed throughout. It proves a harness can reach the
+  model and nothing more.
 
-  A team that picks this harness spends its budget getting nothing, with no
-  signal that the harness rather than its own context engineering is at fault.
-  Warn them, or do not offer it.
 - It did not work at all until 2026-08-19, and that was a separate fault: every
   request was refused whole. Its schemas carry `propertyNames`, which this
   endpoint rejects at any depth, and the refusal arrives as an opaque
