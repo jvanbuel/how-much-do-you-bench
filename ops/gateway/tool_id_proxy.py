@@ -33,6 +33,13 @@ UPSTREAM = os.environ.get("TOOL_ID_PROXY_UPSTREAM", "http://127.0.0.1:4001")
 # Off means forward untouched, so the rewrite can be disabled without a rebuild.
 ENABLED = os.environ.get("TOOL_ID_PROXY_ENABLED", "1") != "0"
 
+# Only the Anthropic route is touched. The OpenAI-shaped harnesses -- opencode,
+# pi, trae-agent, the custom baseline -- pair a tool result with the call that
+# precedes it, so duplicate ids cost them nothing, and all four score the same
+# with them. Rewriting their ids would be a change none of them asked for on
+# the day it matters. Everything outside this path is relayed untouched.
+REWRITE_PATHS = ("/v1/messages",)
+
 # Only ids the endpoint generates. A client-supplied id is left alone: it is
 # echoed conversation history, and rewriting it would break the threading this
 # exists to protect.
@@ -55,6 +62,10 @@ class Proxy(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # the gateway's own logs are the record
 
+    def _should_rewrite(self) -> bool:
+        path = self.path.split("?", 1)[0]
+        return ENABLED and any(path.startswith(p) for p in REWRITE_PATHS)
+
     def _relay(self, method: str) -> None:
         length = int(self.headers.get("content-length") or 0)
         body = self.rfile.read(length) if length else None
@@ -72,6 +83,8 @@ class Proxy(BaseHTTPRequestHandler):
             self.wfile.write(f"gateway proxy: {exc}".encode()[:500])
             return
 
+        rewriting = self._should_rewrite()
+
         self.send_response(up.status_code)
         for k, v in up.headers.items():
             if k.lower() not in _HOP:
@@ -79,18 +92,21 @@ class Proxy(BaseHTTPRequestHandler):
         self.send_header("transfer-encoding", "chunked")
         self.end_headers()
 
-        # Server-sent events are line-oriented and a tool call's id never spans
-        # two lines, so line-at-a-time keeps the stream flowing without
-        # buffering a response the client is reading incrementally.
-        streaming = "event-stream" in (up.headers.get("content-type") or "")
         try:
-            if streaming:
+            if not rewriting:
+                # Every other route is a relay: raw bytes, in the sizes they
+                # arrive, with nothing parsed or reassembled. This is the path
+                # the four working harnesses take.
+                for raw in up.raw.stream(65536, decode_content=False):
+                    self._chunk(raw)
+            elif "event-stream" in (up.headers.get("content-type") or ""):
+                # Server-sent events are line-oriented and a tool call's id
+                # never spans two lines, so line-at-a-time keeps the stream
+                # flowing without buffering what the client reads as it goes.
                 for line in up.iter_lines(decode_unicode=False):
-                    out = (_rewrite(line) if ENABLED else line) + b"\n"
-                    self._chunk(out)
+                    self._chunk(_rewrite(line) + b"\n")
             else:
-                whole = up.content
-                self._chunk(_rewrite(whole) if ENABLED else whole)
+                self._chunk(_rewrite(up.content))
             self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):

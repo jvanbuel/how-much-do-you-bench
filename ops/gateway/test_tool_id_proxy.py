@@ -97,6 +97,16 @@ def main() -> int:
         assert all(i != "call_0" for i in ids), ids
         assert ids[0] != ids[1], "two responses reused an id"
         print("PASS  ids are unique across responses")
+
+        # The four working harnesses do not go through /v1/messages, and their
+        # responses must come back exactly as litellm produced them.
+        r = requests.post("http://127.0.0.1:4900/v1/chat/completions",
+                          json={"x": 1}, stream=True, timeout=10)
+        other = b"".join(r.iter_content(None)).decode()
+        assert '"call_0"' in other, (
+            "a chat-completions response was rewritten; it must be relayed untouched"
+        )
+        print("PASS  /v1/chat/completions relayed untouched (call_0 preserved)")
         return 0
     finally:
         proc.terminate()
