@@ -46,33 +46,17 @@ Five harnesses are supported: **opencode**, **pi**, **claude-code**,
 **trae-agent** and the **custom** `agent/` baseline. Everything else that was tried is below, with why
 it failed, so nobody spends the day rediscovering it.
 
-Suite scores, measured 2026-08-18 on the 21-task suite that existed then:
-**pi 14/21, opencode 6/21, aider 2/21, codex 0/21**. The suite is now sixteen
-scored tasks, the five easiest having become unscored public samples.
+Calibration figures -- which harness scores what, and which scored tasks each
+one fails -- are deliberately not here. They named eight of the scored tasks
+and said which were hardest, which is a map of where the points are for anyone
+reading this repo. They live in the private task repository with the rest of
+the difficulty analysis.
 
-**pi scores 10/16 on the current suite** (2026-08-20, one trial per task,
-`a-scored-task` unmeasured -- a local disk-full, not a task defect). The design
-target is ~30%, so it is still roughly twice as easy as intended, and the two
-changes made that day did not move it:
-
-* *Held-out grader fixtures* -- five graders now also run against input in
-  /tests that the agent never sees. This closes a real hole (an answer fitted
-  to the visible sample used to pass) but costs a competent harness nothing:
-  pi passed `a-scored-task` with all six new edge cases.
-* *De-specified instructions* -- the output contract moved from instruction.md
-  into the workspace stub. Two tasks pi previously failed started passing
-  (`a-scored-task`, `a-scored-task`), which is the
-  wrong direction; a contract in the file the agent is already reading may
-  simply survive the context better than one in a long prompt.
-
-Do not read a one-trial difference as a result. pi's two graded submissions
-were 14/21 and 0/21, so the noise floor swamps a 9-vs-10 change; calibration
-needs n>=3 per task. What the failures do say is structural: pi fails
-`a-scored-task`, `proxmox`, `a-scored-task`, `a-scored-task` and
-`a-scored-task`, every one of which needs several correct actions in sequence or
-a running system to interact with, and passes nearly everything that is one
-file solved in one shot. Difficulty lives on that axis, and no prompt edit
-reaches it -- it takes authoring multi-step tasks.
+What is safe to say: the suite is hard on purpose. The strongest harness
+measured solves well under half of it, several tasks are unsolved by every
+harness tried, and a score in the single digits is the expected shape rather
+than a sign something is broken. Start with the five samples in `tasks/` before
+spending a submission.
 
 aider is not supported despite scoring 11/21 on an earlier bench: it edits
 files from its repo map and cannot run a command, so it answers a
@@ -116,10 +100,10 @@ keeping for any harness that navigates by reading.
 - **It works, after two bugs in this gateway were fixed.** It scored 0/17 on
   the 2026-08-20 graded run, burning 2.45M tokens per task against opencode's
   307K and running to the 300s cap every time. Read that as a measurement of
-  the gateway, not of the harness: with both fixes in it solves `a-scored-task` --
-  38 turns, `stop_reason: end_turn`, zero interruptions, reward 1 -- running
-  the pipeline, querying DuckDB to check its own output, then editing the
-  snapshot config and writing a staging model.
+  the gateway, not of the harness: with both fixes in it solves a scored task
+  end to end -- 38 turns, `stop_reason: end_turn`, zero interruptions, reward 1
+  -- running the pipeline, querying the warehouse to check its own output, then
+  editing the config and writing a new model.
 
   *The first bug was `thinking` and `output_config` on tool-calling requests.*
   The model answers with reasoning and no tool call, the harness has nothing to
