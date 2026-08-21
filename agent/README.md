@@ -147,5 +147,5 @@ Two boards from one run:
 - **Efficiency**: fewest tokens, among teams passing at least half of what the
   leader passed.
 
-You get 5 submissions of the full suite. Running tasks locally is unlimited and
+You get 10 submissions of the full suite. Running tasks locally is unlimited and
 unscored, so the loop above costs you nothing -- only submitting does.

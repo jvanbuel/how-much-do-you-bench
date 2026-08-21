@@ -70,8 +70,9 @@ It refuses uncommitted or unpushed work and sends the full commit hash, because
 each of those fails twenty minutes later rather than immediately. For the same
 reason the server checks the `agent.yaml` in your commit before accepting: a
 config grading would refuse is a rejection now, with the reason, and costs you
-nothing -- not a note on the board twenty minutes later. Five submissions of
-the full suite; local runs are unlimited and unscored.
+nothing -- not a note on the board twenty minutes later. Ten submissions of
+the full suite; local runs are unlimited and unscored. `just cancel <id>`
+stops one you no longer want, but does not give it back.
 
 ## Operating the benchmark
 
